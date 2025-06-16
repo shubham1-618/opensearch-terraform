@@ -109,7 +109,7 @@ module "iam_mapper_lambda" {
   lambda_source_path = "../../../lambda/iam_mapper"
   handler           = "index.lambda_handler"
   runtime           = "python3.9"
-  timeout           = 60
+  timeout           = 120
   memory_size       = 128
   
   policy_json = jsonencode({
