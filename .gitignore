@@ -1,0 +1,12 @@
+# Terraform files
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfvars
+
+# Local environment files
+.env
+.env.local
+
+# Private key files
+*.pem 
