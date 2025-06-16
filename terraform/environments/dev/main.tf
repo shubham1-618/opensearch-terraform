@@ -96,7 +96,8 @@ module "snapshot_lambda" {
     security_group_ids = [module.vpc.opensearch_sg_id]
   }
   
-  schedule_expression = var.create_snapshot ? "cron(0 * * * ? *)" : null  # Run every hour if snapshots are enabled
+  # Run every hour (0th minute of every hour, every day)
+  schedule_expression = "cron(0 * * * ? *)"
 }
 
 # Create IAM user mapper Lambda function
@@ -120,11 +121,18 @@ module "iam_mapper_lambda" {
           "es:ESHttpGet",
           "es:ESHttpPut",
           "es:ESHttpPost",
-          "iam:GetUser"
+          "iam:GetUser",
+          "iam:CreateUser",
+          "iam:TagUser",
+          "iam:CreateLoginProfile",
+          "iam:CreateAccessKey",
+          "iam:ListGroupsForUser",
+          "iam:AddUserToGroup"
         ]
         Resource = [
           "${module.opensearch.opensearch_domain_id}/*",
-          "arn:aws:iam::*:user/*"
+          "arn:aws:iam::*:user/*",
+          "arn:aws:iam::*:group/*"
         ]
       }
     ]

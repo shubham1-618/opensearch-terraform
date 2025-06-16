@@ -6,22 +6,26 @@ This document explains the Lambda functions used in the OpenSearch terraform pro
 
 The project uses two main Lambda functions:
 
-1. **IAM User Mapper** - Maps IAM users to OpenSearch roles
-2. **Snapshot Function** - Creates backups of the OpenSearch domain
+1. **IAM User Mapper** - Maps IAM users to OpenSearch roles and creates IAM users if they don't exist
+2. **Snapshot Function** - Creates hourly backups of the OpenSearch domain
 
 ## IAM User Mapper Function
 
 ### Purpose
-The IAM User Mapper function automates the process of granting IAM users access to OpenSearch by mapping them to OpenSearch security roles.
+The IAM User Mapper function automates the process of granting IAM users access to OpenSearch by mapping them to OpenSearch security roles. It can also automatically create IAM users if they don't exist.
 
 ### How It Works
-1. **Receives Request**: The function expects an event with a `userName` parameter.
-2. **Retrieves IAM ARN**: It uses the AWS SDK to get the ARN (Amazon Resource Name) of the specified IAM user.
+1. **Receives Request**: The function expects an event with a `userName` parameter and optional `createIfMissing` parameter.
+2. **Creates or Retrieves IAM User**: 
+   - If `createIfMissing` is true (default), it checks if the user exists
+   - If the user doesn't exist, it creates a new IAM user with console access (password) and programmatic access (access key)
+   - If the user exists, it retrieves the user's ARN
 3. **Maps User to Role**: It maps the user ARN to the "all_access" role in OpenSearch by:
    - Retrieving current role mappings
    - Checking if the user is already mapped
    - Appending the user ARN to the role if not already present
    - Updating the role mapping via the OpenSearch API
+4. **Returns Credentials**: If a new user was created, it returns the temporary password and access keys in the response
 
 ### Configuration
 - **Runtime**: Python
@@ -33,7 +37,26 @@ The IAM User Mapper function automates the process of granting IAM users access 
 This function can be invoked manually or through other services with the following event structure:
 ```json
 {
-  "userName": "example-user"
+  "userName": "example-user",
+  "createIfMissing": true
+}
+```
+
+### Response
+If a new user is created, the function returns credentials:
+```json
+{
+  "statusCode": 200,
+  "body": {
+    "message": "Successfully mapped user example-user to all_access role",
+    "userStatus": "created",
+    "credentials": {
+      "username": "example-user",
+      "password": "temporaryPassword123!",
+      "access_key_id": "AKIAXXXXXXXXXXXXXXXX",
+      "secret_access_key": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  }
 }
 ```
 
@@ -61,7 +84,11 @@ This function automates the backup process for OpenSearch by creating and managi
   - `ROLE_ARN`: ARN of the IAM role that OpenSearch service will assume to access the S3 bucket
 
 ### Scheduling
-This function is typically scheduled to run on a regular basis (e.g., daily) using CloudWatch Events/EventBridge.
+The snapshot function is configured to run **every hour** using CloudWatch Events/EventBridge with the following schedule expression:
+```
+cron(0 * * * ? *)
+```
+This means it runs at minute 0 of every hour, every day.
 
 ## Terraform Integration
 
@@ -71,7 +98,15 @@ These Lambda functions are deployed through the Terraform configuration in `terr
 2. Packages the Lambda code
 3. Deploys the Lambda function
 4. Sets up environment variables
-5. Configures CloudWatch scheduling if specified
+5. Configures CloudWatch scheduling for automatic execution
+
+### IAM Permissions
+
+The IAM mapper function has the following permissions:
+- `es:ESHttpGet`, `es:ESHttpPut`, `es:ESHttpPost` - For OpenSearch API access
+- `iam:GetUser`, `iam:CreateUser`, `iam:TagUser` - For IAM user management
+- `iam:CreateLoginProfile`, `iam:CreateAccessKey` - For creating user credentials
+- `iam:ListGroupsForUser`, `iam:AddUserToGroup` - For managing group memberships
 
 ## Dependencies
 
