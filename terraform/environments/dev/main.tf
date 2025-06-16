@@ -141,6 +141,8 @@ module "iam_mapper_lambda" {
   environment_variables = {
     OPENSEARCH_ENDPOINT = module.opensearch.opensearch_endpoint
     REGION              = var.region
+    MASTER_USERNAME     = var.master_user_name
+    MASTER_PASSWORD     = var.master_user_password
   }
   
   vpc_config = {

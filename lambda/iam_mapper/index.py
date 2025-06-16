@@ -5,12 +5,15 @@ import requests
 import string
 import random
 import uuid
+import base64
 from botocore.exceptions import ClientError
 from requests_aws4auth import AWS4Auth
 
 # Environment variables
 host = os.environ['OPENSEARCH_ENDPOINT']  # OpenSearch domain endpoint without https://
 region = os.environ['REGION']
+master_username = os.environ.get('MASTER_USERNAME', 'admin')  # Default to 'admin' if not set
+master_password = os.environ.get('MASTER_PASSWORD')  # This should be set in the Lambda environment
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()
@@ -120,11 +123,21 @@ def lambda_handler(event, context):
                     'body': json.dumps(f'IAM User not found: {str(e)}')
                 }
         
+        # Check if master password is available
+        if not master_password:
+            return {
+                'statusCode': 500,
+                'body': json.dumps('MASTER_PASSWORD environment variable not set')
+            }
+        
         # Map the user to all_access role in OpenSearch
         role_mapping_endpoint = f'https://{host}/_plugins/_security/api/rolesmapping/all_access'
         
+        # Use basic auth for OpenSearch request
+        auth = (master_username, master_password)
+        
         # First get current mappings
-        get_response = requests.get(role_mapping_endpoint, auth=awsauth)
+        get_response = requests.get(role_mapping_endpoint, auth=auth, verify=True)
         
         if get_response.status_code != 200:
             return {
@@ -165,9 +178,10 @@ def lambda_handler(event, context):
         headers = {"Content-Type": "application/json"}
         put_response = requests.put(
             role_mapping_endpoint,
-            auth=awsauth,
+            auth=auth,
             json=update_payload,
-            headers=headers
+            headers=headers,
+            verify=True
         )
         
         if put_response.status_code >= 200 and put_response.status_code < 300:
