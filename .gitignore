@@ -2,7 +2,7 @@
 *.tfstate
 *.tfstate.backup
 .terraform/
-*.tfvars
+
 
 # Local environment files
 .env
