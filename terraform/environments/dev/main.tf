@@ -80,6 +80,15 @@ module "snapshot_lambda" {
         Resource = [
           "${module.opensearch.opensearch_domain_id}/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = [
+          "${module.opensearch.snapshot_role_arn}"
+        ]
       }
     ]
   })
