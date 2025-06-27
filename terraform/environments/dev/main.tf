@@ -80,6 +80,15 @@ module "snapshot_lambda" {
         Resource = [
           "${module.opensearch.opensearch_domain_id}/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = [
+          "${module.opensearch.snapshot_role_arn}"
+        ]
       }
     ]
   })
@@ -96,7 +105,8 @@ module "snapshot_lambda" {
     security_group_ids = [module.vpc.opensearch_sg_id]
   }
   
-  schedule_expression = var.create_snapshot ? "cron(0 * * * ? *)" : null  # Run every hour if snapshots are enabled
+  # Run every hour (0th minute of every hour, every day)
+  schedule_expression = "cron(0 * * * ? *)"
 }
 
 # Create IAM user mapper Lambda function
@@ -108,7 +118,7 @@ module "iam_mapper_lambda" {
   lambda_source_path = "../../../lambda/iam_mapper"
   handler           = "index.lambda_handler"
   runtime           = "python3.9"
-  timeout           = 60
+  timeout           = 120
   memory_size       = 128
   
   policy_json = jsonencode({
@@ -120,11 +130,18 @@ module "iam_mapper_lambda" {
           "es:ESHttpGet",
           "es:ESHttpPut",
           "es:ESHttpPost",
-          "iam:GetUser"
+          "iam:GetUser",
+          "iam:CreateUser",
+          "iam:TagUser",
+          "iam:CreateLoginProfile",
+          "iam:CreateAccessKey",
+          "iam:ListGroupsForUser",
+          "iam:AddUserToGroup"
         ]
         Resource = [
           "${module.opensearch.opensearch_domain_id}/*",
-          "arn:aws:iam::*:user/*"
+          "arn:aws:iam::*:user/*",
+          "arn:aws:iam::*:group/*"
         ]
       }
     ]
@@ -133,6 +150,8 @@ module "iam_mapper_lambda" {
   environment_variables = {
     OPENSEARCH_ENDPOINT = module.opensearch.opensearch_endpoint
     REGION              = var.region
+    MASTER_USERNAME     = var.master_user_name
+    MASTER_PASSWORD     = var.master_user_password
   }
   
   vpc_config = {

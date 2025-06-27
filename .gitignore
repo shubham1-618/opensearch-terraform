@@ -2,7 +2,7 @@
 *.tfstate
 *.tfstate.backup
 .terraform/
-*.tfvars
+
 
 # Local environment files
 .env
@@ -10,3 +10,9 @@
 
 # Private key files
 *.pem 
+
+#new-test-user-123
+#%VkPzgNRuyZ$^@a^
+
+#test-user-123
+#lB@F^X(uB#a47uwe

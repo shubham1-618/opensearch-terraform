@@ -109,6 +109,15 @@ resource "aws_security_group" "opensearch_sg" {
     security_groups = [aws_security_group.jump_server_sg.id]
   }
 
+  # Self-reference ingress rule to allow Lambda functions using this same security group
+  ingress {
+    description = "HTTPS from Lambda functions"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    self        = true  # Allow traffic from resources using this same security group
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
