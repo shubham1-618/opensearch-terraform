@@ -112,15 +112,15 @@ def lambda_handler(event, context):
                 }
         else:
             # Just get the user ARN if it exists
-            try:
-                user_response = iam.get_user(UserName=user_name)
-                user_arn = user_response['User']['Arn']
+        try:
+            user_response = iam.get_user(UserName=user_name)
+            user_arn = user_response['User']['Arn']
                 credentials = None
                 status = "existing"
-            except Exception as e:
-                return {
-                    'statusCode': 404,
-                    'body': json.dumps(f'IAM User not found: {str(e)}')
+        except Exception as e:
+            return {
+                'statusCode': 404,
+                'body': json.dumps(f'IAM User not found: {str(e)}')
                 }
         
         # Check if master password is available
