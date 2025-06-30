@@ -2,6 +2,21 @@
 
 This document outlines manual steps required for complete setup of the OpenSearch environment.
 
+## SSH Key Creation
+
+Before deploying the infrastructure with Terraform, create an SSH key pair in the AWS console:
+
+1. Go to EC2 dashboard in the AWS console
+2. Navigate to "Key Pairs" in the left sidebar
+3. Click "Create key pair"
+4. Enter name: `opensearch-jump-server-key`
+5. Select key pair type: RSA
+6. Select format: .pem
+7. Click "Create key pair"
+8. The private key file (.pem) will download automatically
+9. Save this file securely - you will need it to SSH into the jump server
+
+
 ## Terraform Deployment Instructions
 
 To deploy the OpenSearch infrastructure using Terraform:
@@ -28,40 +43,6 @@ To deploy the OpenSearch infrastructure using Terraform:
    terraform destroy
    ```
 
-## Important Notes
-
-### OpenSearch Service-Linked Roles
-
-This Terraform configuration creates an AWS service-linked role for OpenSearch. This role is required to give Amazon OpenSearch Service permissions to access your VPC. 
-
-If you've previously created this role in your AWS account, you may see an error message like:
-```
-Error: Error creating service-linked role with name AWSServiceRoleForAmazonOpenSearchService: InvalidInput: Service-linked role AWSServiceRoleForAmazonOpenSearchService already exists.
-```
-
-This error can be safely ignored, as it means the role already exists in your account and can be used by the OpenSearch domain.
-
-### OpenSearch Instance Types
-
-When choosing an instance type for OpenSearch, make sure to use the proper format with the `.search` suffix. For example:
-- `t3.small.search` instead of `t3.small`
-- `m5.large.search` instead of `m5.large`
-
-AWS only allows specific instance types for OpenSearch domains. If you encounter an error related to instance types, check the error message for a list of supported types or refer to the AWS documentation.
-
-## SSH Key Creation
-
-Before deploying the infrastructure with Terraform, create an SSH key pair in the AWS console:
-
-1. Go to EC2 dashboard in the AWS console
-2. Navigate to "Key Pairs" in the left sidebar
-3. Click "Create key pair"
-4. Enter name: `opensearch-jump-server-key`
-5. Select key pair type: RSA
-6. Select format: .pem
-7. Click "Create key pair"
-8. The private key file (.pem) will download automatically
-9. Save this file securely - you will need it to SSH into the jump server
 
 ## SSH Tunneling Instructions
 
@@ -174,3 +155,25 @@ To manually trigger the snapshot Lambda function:
 - Check Lambda function CloudWatch logs
 - Verify that fine-grained access control is enabled on the OpenSearch domain
 - Ensure the mapping role has proper permissions 
+
+
+## Important Notes
+
+### OpenSearch Service-Linked Roles
+
+This Terraform configuration creates an AWS service-linked role for OpenSearch. This role is required to give Amazon OpenSearch Service permissions to access your VPC. 
+
+If you've previously created this role in your AWS account, you may see an error message like:
+```
+Error: Error creating service-linked role with name AWSServiceRoleForAmazonOpenSearchService: InvalidInput: Service-linked role AWSServiceRoleForAmazonOpenSearchService already exists.
+```
+
+This error can be safely ignored, as it means the role already exists in your account and can be used by the OpenSearch domain.
+
+### OpenSearch Instance Types
+
+When choosing an instance type for OpenSearch, make sure to use the proper format with the `.search` suffix. For example:
+- `t3.small.search` instead of `t3.small`
+- `m5.large.search` instead of `m5.large`
+
+AWS only allows specific instance types for OpenSearch domains. If you encounter an error related to instance types, check the error message for a list of supported types or refer to the AWS documentation.

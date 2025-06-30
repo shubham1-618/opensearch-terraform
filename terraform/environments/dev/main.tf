@@ -42,6 +42,51 @@ module "opensearch" {
   master_user_password = var.master_user_password
 }
 
+# Create role mapper Lambda function
+module "role_mapper_lambda" {
+  source = "../../modules/lambda"
+
+  environment       = var.environment
+  lambda_name       = "opensearch-role-mapper"
+  lambda_source_path = "../../../lambda/role_mapper"
+  handler           = "index.lambda_handler"
+  runtime           = "python3.9"
+  timeout           = 120
+  memory_size       = 128
+  
+  policy_json = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "es:ESHttpGet",
+          "es:ESHttpPut",
+          "es:ESHttpPost",
+          "iam:GetRole",
+          "sts:GetCallerIdentity"
+        ]
+        Resource = [
+          "${module.opensearch.opensearch_domain_id}/*",
+          "*"
+        ]
+      }
+    ]
+  })
+  
+  environment_variables = {
+    OPENSEARCH_ENDPOINT = module.opensearch.opensearch_endpoint
+    REGION              = var.region
+    MASTER_USERNAME     = var.master_user_name
+    MASTER_PASSWORD     = var.master_user_password
+  }
+  
+  vpc_config = {
+    subnet_ids         = module.vpc.private_subnet_ids
+    security_group_ids = [module.vpc.opensearch_sg_id]
+  }
+}
+
 # Create snapshot Lambda function
 module "snapshot_lambda" {
   source = "../../modules/lambda"

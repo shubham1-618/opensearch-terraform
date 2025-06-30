@@ -22,20 +22,103 @@ awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, 'es',
 # AWS clients
 iam = boto3.client('iam')
 
-def generate_password(length=12):
-    """Generate a secure random password"""
-    chars = string.ascii_letters + string.digits + "!@#$%^&*()"
-    return ''.join(random.choice(chars) for _ in range(length))
-
-def create_iam_user(user_name):
+def generate_password(length=16):
     """
-    Creates an IAM user if it doesn't exist and returns the user ARN
+    Generate a secure random password that meets OpenSearch requirements:
+    - At least 8 characters
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one digit
+    - At least one special character
+    """
+    if length < 8:
+        length = 16  # Ensure minimum length
+        
+    lowercase = string.ascii_lowercase
+    uppercase = string.ascii_uppercase
+    digits = string.digits
+    special = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+    
+    # Ensure at least one of each required character type
+    password = [
+        random.choice(uppercase),
+        random.choice(lowercase),
+        random.choice(digits),
+        random.choice(special)
+    ]
+    
+    # Fill the rest with random characters from all types
+    all_chars = lowercase + uppercase + digits + special
+    password.extend(random.choice(all_chars) for _ in range(length - 4))
+    
+    # Shuffle the password characters
+    random.shuffle(password)
+    
+    return ''.join(password)
+
+def create_or_update_iam_user(user_name, force_credential_reset=False):
+    """
+    Creates an IAM user if it doesn't exist or updates an existing user's credentials
+    if force_credential_reset is True
     """
     try:
         # Try to get the user first to see if they exist
         try:
             user_response = iam.get_user(UserName=user_name)
-            return user_response['User']['Arn'], None, "existing"
+            user_arn = user_response['User']['Arn']
+            
+            # If force_credential_reset is True, generate new credentials
+            if force_credential_reset:
+                # Generate a strong password
+                password = generate_password(16)
+                
+                # Update login profile or create if it doesn't exist
+                try:
+                    iam.update_login_profile(
+                        UserName=user_name,
+                        Password=password,
+                        PasswordResetRequired=True
+                    )
+                except iam.exceptions.NoSuchEntityException:
+                    # Login profile doesn't exist, create it
+                    iam.create_login_profile(
+                        UserName=user_name,
+                        Password=password,
+                        PasswordResetRequired=True
+                    )
+                
+                # Create new access key (first delete old ones if at limit)
+                try:
+                    # List existing access keys
+                    keys_response = iam.list_access_keys(UserName=user_name)
+                    # AWS allows max 2 access keys per user
+                    if len(keys_response['AccessKeyMetadata']) >= 2:
+                        # Delete the oldest key
+                        oldest_key = min(keys_response['AccessKeyMetadata'], 
+                                       key=lambda x: x['CreateDate'])
+                        iam.delete_access_key(
+                            UserName=user_name,
+                            AccessKeyId=oldest_key['AccessKeyId']
+                        )
+                    
+                    # Create new access key
+                    access_key_response = iam.create_access_key(UserName=user_name)
+                    
+                    credentials = {
+                        "username": user_name,
+                        "password": password,
+                        "access_key_id": access_key_response['AccessKey']['AccessKeyId'],
+                        "secret_access_key": access_key_response['AccessKey']['SecretAccessKey']
+                    }
+                    
+                    return user_arn, credentials, "updated"
+                except Exception as e:
+                    # Still return the password even if access key creation fails
+                    return user_arn, {"username": user_name, "password": password}, "partial_update"
+            else:
+                # No credential reset requested for existing user
+                return user_arn, None, "existing"
+                
         except iam.exceptions.NoSuchEntityException:
             # User doesn't exist, create them
             user_response = iam.create_user(
@@ -77,51 +160,107 @@ def create_iam_user(user_name):
             return user_response['User']['Arn'], credentials, "created"
     
     except Exception as e:
-        raise Exception(f"Error creating IAM user: {str(e)}")
+        raise Exception(f"Error creating/updating IAM user: {str(e)}")
+
+def create_opensearch_internal_user(user_name, password, auth):
+    """
+    Creates an internal user in OpenSearch with the same name as the IAM user
+    """
+    try:
+        # First check if user already exists
+        internal_users_endpoint = f'https://{host}/_plugins/_security/api/internalusers/{user_name}'
+        
+        # Check if the user exists
+        get_response = requests.get(internal_users_endpoint, auth=auth, verify=True)
+        
+        if get_response.status_code == 200:
+            # User already exists, update the password if provided
+            if password:
+                account_id = boto3.client('sts').get_caller_identity()['Account']
+                user_payload = {
+                    "password": password,
+                    "backend_roles": [f"arn:aws:iam::{account_id}:user/{user_name}"],
+                    "attributes": {
+                        "updated_by": "iam_mapper_lambda"
+                    }
+                }
+                
+                headers = {"Content-Type": "application/json"}
+                update_response = requests.put(
+                    internal_users_endpoint,
+                    auth=auth,
+                    json=user_payload,
+                    headers=headers,
+                    verify=True
+                )
+                
+                if update_response.status_code >= 200 and update_response.status_code < 300:
+                    return True, "updated"
+                else:
+                    return False, f"Error updating internal user: {update_response.text}"
+            
+            # If no password provided, just return success
+            return True, "existing"
+        
+        # If user doesn't exist (404), create it
+        if get_response.status_code == 404:
+            # Create the user with password and backend role
+            account_id = boto3.client('sts').get_caller_identity()['Account']
+            user_payload = {
+                "password": password,
+                "backend_roles": [f"arn:aws:iam::{account_id}:user/{user_name}"],
+                "attributes": {
+                    "created_by": "iam_mapper_lambda"
+                }
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            create_response = requests.put(
+                internal_users_endpoint,
+                auth=auth,
+                json=user_payload,
+                headers=headers,
+                verify=True
+            )
+            
+            if create_response.status_code >= 200 and create_response.status_code < 300:
+                return True, "created"
+            else:
+                return False, f"Error creating internal user: {create_response.text}"
+        
+        # Any other status code indicates an error
+        return False, f"Error checking if internal user exists: {get_response.text}"
+    except Exception as e:
+        return False, f"Exception creating internal user: {str(e)}"
 
 def lambda_handler(event, context):
     """
     Maps an IAM user to an OpenSearch role.
     If the user doesn't exist, it creates the user first.
+    Also creates a matching internal user in OpenSearch.
     
     Event structure should include:
     {
         "userName": "username-to-map",
-        "createIfMissing": true  # Optional, defaults to true
+        "createIfMissing": true,  # Optional, defaults to true
+        "createInternalUser": true,  # Optional, defaults to true
+        "opensearchRole": "all_access",  # Optional, defaults to all_access
+        "forceCredentialReset": false  # Optional, defaults to false - if true, will regenerate credentials even for existing users
     }
     """
     try:
         # Get the username from the event
         user_name = event.get('userName')
         create_if_missing = event.get('createIfMissing', True)
+        create_internal_user = event.get('createInternalUser', True)
+        opensearch_role = event.get('opensearchRole', 'all_access')
+        force_credential_reset = event.get('forceCredentialReset', False)
         
         if not user_name:
             return {
                 'statusCode': 400,
                 'body': json.dumps('userName parameter is required')
             }
-        
-        # Get or create the IAM user ARN
-        if create_if_missing:
-            try:
-                user_arn, credentials, status = create_iam_user(user_name)
-            except Exception as e:
-                return {
-                    'statusCode': 500,
-                    'body': json.dumps(f'Error creating/getting IAM User: {str(e)}')
-                }
-        else:
-            # Just get the user ARN if it exists
-        try:
-            user_response = iam.get_user(UserName=user_name)
-            user_arn = user_response['User']['Arn']
-                credentials = None
-                status = "existing"
-        except Exception as e:
-            return {
-                'statusCode': 404,
-                'body': json.dumps(f'IAM User not found: {str(e)}')
-                }
         
         # Check if master password is available
         if not master_password:
@@ -130,11 +269,47 @@ def lambda_handler(event, context):
                 'body': json.dumps('MASTER_PASSWORD environment variable not set')
             }
         
-        # Map the user to all_access role in OpenSearch
-        role_mapping_endpoint = f'https://{host}/_plugins/_security/api/rolesmapping/all_access'
-        
         # Use basic auth for OpenSearch request
         auth = (master_username, master_password)
+        
+        # Get or create the IAM user ARN
+        if create_if_missing or force_credential_reset:
+            try:
+                user_arn, credentials, status = create_or_update_iam_user(user_name, force_credential_reset)
+                
+                # Create or update an internal user in OpenSearch if requested
+                if create_internal_user and credentials:  # Only if we have credentials
+                    internal_user_success, internal_user_status = create_opensearch_internal_user(
+                        user_name, 
+                        credentials['password'], 
+                        auth
+                    )
+                    if not internal_user_success:
+                        return {
+                            'statusCode': 500,
+                            'body': json.dumps(f'Error creating internal OpenSearch user: {internal_user_status}')
+                        }
+                
+            except Exception as e:
+                return {
+                    'statusCode': 500,
+                    'body': json.dumps(f'Error creating/updating IAM User: {str(e)}')
+                }
+        else:
+            # Just get the user ARN if it exists
+            try:
+                user_response = iam.get_user(UserName=user_name)
+                user_arn = user_response['User']['Arn']
+                credentials = None
+                status = "existing"
+            except Exception as e:
+                return {
+                    'statusCode': 404,
+                    'body': json.dumps(f'IAM User not found: {str(e)}')
+                }
+        
+        # Map the user to the specified OpenSearch role
+        role_mapping_endpoint = f'https://{host}/_plugins/_security/api/rolesmapping/{opensearch_role}'
         
         # First get current mappings
         get_response = requests.get(role_mapping_endpoint, auth=auth, verify=True)
@@ -148,31 +323,58 @@ def lambda_handler(event, context):
         # Parse existing mappings
         current_mappings = get_response.json()
         
-        # Check if user is already mapped
-        if 'all_access' in current_mappings:
-            backend_roles = current_mappings['all_access'].get('backend_roles', [])
+        # Initialize update_payload with all existing mappings to preserve them
+        update_payload = {}
+        
+        if opensearch_role in current_mappings:
+            # Copy all existing mapping fields (users, hosts, etc.)
+            update_payload = current_mappings[opensearch_role]
+            
+            # Filter out reserved/hidden fields that might cause errors
+            reserved_fields = ['hidden', 'reserved', '_meta']
+            for field in reserved_fields:
+                if field in update_payload:
+                    del update_payload[field]
+            
+            backend_roles = update_payload.get('backend_roles', [])
             
             # If user is already mapped, return success
             if user_arn in backend_roles:
+                response_data = {
+                    'message': f'User {user_name} is already mapped to {opensearch_role} role',
+                    'userStatus': status,
+                    'mapping': update_payload
+                }
+                
+                if credentials:
+                    response_data['credentials'] = credentials
+                
                 return {
                     'statusCode': 200,
-                    'body': json.dumps({
-                        'message': f'User {user_name} is already mapped to all_access role',
-                        'userStatus': status,
-                        'credentials': credentials
-                    })
+                    'body': json.dumps(response_data)
                 }
             
             # Add user to existing backend roles
             backend_roles.append(user_arn)
+            update_payload['backend_roles'] = backend_roles
         else:
             # Create new mapping with the user
-            backend_roles = [user_arn]
+            update_payload = {
+                "backend_roles": [user_arn],
+                "users": []
+            }
         
-        # Prepare update payload
-        update_payload = {
-            "backend_roles": backend_roles
-        }
+        # Make sure 'users' field exists to preserve other users
+        if 'users' not in update_payload:
+            update_payload['users'] = []
+        
+        # Always ensure 'admin' is in the users list for all_access role
+        if opensearch_role == 'all_access' and 'admin' not in update_payload['users']:
+            update_payload['users'].append('admin')
+        
+        # If we created an internal user, add it to the users list for this role too
+        if create_internal_user and user_name not in update_payload['users']:
+            update_payload['users'].append(user_name)
         
         # Update role mapping
         headers = {"Content-Type": "application/json"}
@@ -185,13 +387,18 @@ def lambda_handler(event, context):
         )
         
         if put_response.status_code >= 200 and put_response.status_code < 300:
+            response_data = {
+                'message': f'Successfully mapped user {user_name} to {opensearch_role} role',
+                'userStatus': status,
+                'mapping': update_payload
+            }
+            
+            if credentials:
+                response_data['credentials'] = credentials
+                
             return {
                 'statusCode': 200,
-                'body': json.dumps({
-                    'message': f'Successfully mapped user {user_name} to all_access role',
-                    'userStatus': status,
-                    'credentials': credentials
-                })
+                'body': json.dumps(response_data)
             }
         else:
             return {
