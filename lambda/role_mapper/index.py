@@ -1,14 +1,13 @@
 import boto3
-import os
 import json
 import requests
 from requests_aws4auth import AWS4Auth
 
-# Environment variables
-host = os.environ['OPENSEARCH_ENDPOINT']  # OpenSearch domain endpoint without https://
-region = os.environ['REGION']
-master_username = os.environ.get('MASTER_USERNAME', 'admin')  # Default to 'admin' if not set
-master_password = os.environ.get('MASTER_PASSWORD')  # This should be set in the Lambda environment
+# Hardcoded values
+host = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"  # OpenSearch domain endpoint without https://
+region = "us-east-2"
+master_username = "admin"
+master_password = "StrongPassword123!"  # Hardcoded password (in a real environment, use a more secure method)
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()
@@ -25,7 +24,7 @@ def lambda_handler(event, context):
     {
         "roleName": "role-to-map",
         "roleArn": "arn:aws:iam::123456789012:role/role-name", 
-        "opensearchRole": "opensearch-role-name",  # Default to 'all_access' if not specified
+        "opensearchRole": "all_access",  # Hardcoded to 'all_access'
         "accountId": "123456789012"  # AWS account ID (optional if roleArn is provided)
     }
     """
@@ -33,8 +32,8 @@ def lambda_handler(event, context):
         # Extract parameters from event
         role_name = event.get('roleName')
         role_arn = event.get('roleArn')
-        opensearch_role = event.get('opensearchRole', 'all_access')
-        account_id = event.get('accountId')
+        opensearch_role = "all_access"  # Hardcoded to all_access
+        account_id = event.get('accountId', "123456789012")  # Hardcoded account ID if not provided
         
         # Validate required parameters
         if not (role_name or role_arn):
@@ -45,19 +44,7 @@ def lambda_handler(event, context):
             
         # Construct role ARN if not provided
         if not role_arn:
-            if not account_id:
-                # Get the AWS account ID if not provided
-                sts = boto3.client('sts')
-                account_id = sts.get_caller_identity()["Account"]
-            
             role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
-        
-        # Check if master password is available
-        if not master_password:
-            return {
-                'statusCode': 500,
-                'body': json.dumps('MASTER_PASSWORD environment variable not set')
-            }
         
         # Map the role to specified OpenSearch role
         role_mapping_endpoint = f'https://{host}/_plugins/_security/api/rolesmapping/{opensearch_role}'

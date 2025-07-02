@@ -12,21 +12,17 @@ data "aws_iam_role" "opensearch_service_linked_role" {
 
 # S3 bucket for snapshots
 resource "aws_s3_bucket" "snapshot_bucket" {
-  bucket = "${var.environment}-opensearch-snapshots-${random_id.bucket_suffix.hex}"
+  bucket = "dev-opensearch-snapshots-abcdef123456"
   
   tags = {
-    Name        = "${var.environment}-opensearch-snapshots"
-    Environment = var.environment
+    Name        = "dev-opensearch-snapshots"
+    Environment = "dev"
   }
-}
-
-resource "random_id" "bucket_suffix" {
-  byte_length = 4
 }
 
 # IAM role for OpenSearch snapshot creation
 resource "aws_iam_role" "opensearch_snapshot_role" {
-  name = "${var.environment}-opensearch-snapshot-role"
+  name = "dev-opensearch-snapshot-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -44,7 +40,7 @@ resource "aws_iam_role" "opensearch_snapshot_role" {
 
 # IAM policy for OpenSearch snapshot role
 resource "aws_iam_policy" "opensearch_snapshot_policy" {
-  name        = "${var.environment}-opensearch-snapshot-policy"
+  name        = "dev-opensearch-snapshot-policy"
   description = "Policy for OpenSearch to create snapshots in S3"
 
   policy = jsonencode({
@@ -80,12 +76,12 @@ resource "aws_iam_role_policy_attachment" "snapshot_policy_attachment" {
 
 # OpenSearch domain
 resource "aws_opensearch_domain" "opensearch_domain" {
-  domain_name    = var.domain_name
-  engine_version = var.engine_version
+  domain_name    = "dev-opensearch"
+  engine_version = "OpenSearch_2.5"
 
   cluster_config {
-    instance_type            = var.instance_type
-    instance_count           = var.instance_count
+    instance_type            = "t3.small"
+    instance_count           = 3
     zone_awareness_enabled   = true
     zone_awareness_config {
       availability_zone_count = 3
@@ -94,20 +90,20 @@ resource "aws_opensearch_domain" "opensearch_domain" {
 
   ebs_options {
     ebs_enabled = true
-    volume_size = var.volume_size
+    volume_size = 10
   }
 
   vpc_options {
-    subnet_ids         = var.subnet_ids
-    security_group_ids = [var.security_group_id]
+    subnet_ids         = ["subnet-0123456789abcdef1", "subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]
+    security_group_ids = ["sg-0123456789abcdef0"]
   }
 
   advanced_security_options {
     enabled                        = true
     internal_user_database_enabled = true
     master_user_options {
-      master_user_name     = var.master_user_name
-      master_user_password = var.master_user_password
+      master_user_name     = "admin"
+      master_user_password = "StrongPassword123!"
     }
   }
   
@@ -134,7 +130,7 @@ resource "aws_opensearch_domain" "opensearch_domain" {
         "AWS": "*"
       },
       "Action": "es:*",
-      "Resource": "arn:aws:es:${var.region}:${data.aws_caller_identity.current.account_id}:domain/${var.domain_name}/*"
+      "Resource": "arn:aws:es:us-east-2:123456789012:domain/dev-opensearch/*"
     }
   ]
 }
@@ -145,16 +141,13 @@ CONFIG
   }
 
   tags = {
-    Name        = "${var.environment}-opensearch-domain"
-    Environment = var.environment
+    Name        = "dev-opensearch-domain"
+    Environment = "dev"
   }
   
   # Wait for the service-linked role to be available
   depends_on = [aws_iam_service_linked_role.opensearch]
 }
-
-# Get current account ID
-data "aws_caller_identity" "current" {}
 
 # Create fine-grained access control
 resource "aws_opensearch_domain_policy" "main" {

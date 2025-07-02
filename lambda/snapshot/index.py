@@ -1,15 +1,14 @@
 import boto3
-import os
 import json
 import requests
 from requests_aws4auth import AWS4Auth
 from datetime import datetime
 
-# Environment variables
-host = os.environ['OPENSEARCH_ENDPOINT']  # OpenSearch domain endpoint without https://
-region = os.environ['REGION']
-bucket_name = os.environ['BUCKET_NAME']
-role_arn = os.environ['ROLE_ARN']
+# Hardcoded values
+host = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"  # OpenSearch domain endpoint without https://
+region = "us-east-2"
+bucket_name = "dev-opensearch-snapshots-abcdef123456"
+role_arn = "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role"
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()

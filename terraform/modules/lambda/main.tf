@@ -1,3 +1,46 @@
+# Since we've deleted variables.tf but still need a few parameters for each Lambda function,
+# declare the necessary variables inline
+variable "environment" {
+  default = "dev"
+}
+
+variable "lambda_name" {
+  description = "Name of the Lambda function"
+}
+
+variable "handler" {
+  description = "Lambda function handler"
+  default = "index.lambda_handler"
+}
+
+variable "timeout" {
+  description = "Lambda function timeout in seconds"
+  default = 120
+}
+
+variable "memory_size" {
+  description = "Lambda function memory size in MB"
+  default = 128
+}
+
+variable "policy_json" {
+  description = "IAM policy JSON for the Lambda function"
+}
+
+variable "environment_variables" {
+  description = "Environment variables for the Lambda function"
+  type = map(string)
+}
+
+variable "schedule_expression" {
+  description = "CloudWatch Events schedule expression"
+  default = null
+}
+
+# Note: This is a template file that would need specific values for each Lambda function
+# Since we have 3 different Lambda functions using this module, we'll keep some module functionality
+# but hardcode the general configuration values
+
 # IAM role for Lambda execution
 resource "aws_iam_role" "lambda_exec_role" {
   name = "${var.environment}-${var.lambda_name}-execution-role"
@@ -21,7 +64,7 @@ resource "aws_iam_policy" "lambda_policy" {
   name        = "${var.environment}-${var.lambda_name}-policy"
   description = "Policy for ${var.lambda_name} Lambda function"
 
-  policy = var.policy_json
+  policy = var.policy_json  # This will vary for each Lambda function, so we keep as a parameter
 }
 
 # Attach policy to role
@@ -36,9 +79,8 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# VPC access policy (if needed)
+# VPC access policy
 resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
-  count      = var.vpc_config != null ? 1 : 0
   role       = aws_iam_role.lambda_exec_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
@@ -48,34 +90,31 @@ resource "aws_lambda_function" "lambda_function" {
   function_name    = "${var.environment}-${var.lambda_name}"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = var.handler
-  runtime          = var.runtime
+  runtime          = "python3.9"
   filename         = "${path.module}/files/${var.lambda_name}.zip"
   source_code_hash = filebase64sha256("${path.module}/files/${var.lambda_name}.zip")
   timeout          = var.timeout
   memory_size      = var.memory_size
   
   environment {
-    variables = var.environment_variables
+    variables = var.environment_variables  # Each Lambda has different env vars, so we keep as parameter
   }
 
-  dynamic "vpc_config" {
-    for_each = var.vpc_config != null ? [var.vpc_config] : []
-    content {
-      subnet_ids         = vpc_config.value.subnet_ids
-      security_group_ids = vpc_config.value.security_group_ids
-    }
+  vpc_config {
+    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
+    security_group_ids = ["sg-0123456789abcdef0"]
   }
 
   tags = {
-    Name        = "${var.environment}-${var.lambda_name}"
-    Environment = var.environment
+    Name        = "dev-${var.lambda_name}"
+    Environment = "dev"
   }
 }
 
 # CloudWatch Event Rule for scheduling (if enabled)
 resource "aws_cloudwatch_event_rule" "lambda_schedule" {
   count               = var.schedule_expression != null ? 1 : 0
-  name                = "${var.environment}-${var.lambda_name}-schedule"
+  name                = "dev-${var.lambda_name}-schedule"
   description         = "Schedule for ${var.lambda_name} Lambda function"
   schedule_expression = var.schedule_expression
 }
@@ -84,7 +123,7 @@ resource "aws_cloudwatch_event_rule" "lambda_schedule" {
 resource "aws_cloudwatch_event_target" "lambda_target" {
   count     = var.schedule_expression != null ? 1 : 0
   rule      = aws_cloudwatch_event_rule.lambda_schedule[0].name
-  target_id = "${var.environment}-${var.lambda_name}"
+  target_id = "dev-${var.lambda_name}"
   arn       = aws_lambda_function.lambda_function.arn
 }
 

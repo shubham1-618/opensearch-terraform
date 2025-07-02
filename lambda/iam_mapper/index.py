@@ -1,5 +1,4 @@
 import boto3
-import os
 import json
 import requests
 import string
@@ -9,11 +8,11 @@ import base64
 from botocore.exceptions import ClientError
 from requests_aws4auth import AWS4Auth
 
-# Environment variables
-host = os.environ['OPENSEARCH_ENDPOINT']  # OpenSearch domain endpoint without https://
-region = os.environ['REGION']
-master_username = os.environ.get('MASTER_USERNAME', 'admin')  # Default to 'admin' if not set
-master_password = os.environ.get('MASTER_PASSWORD')  # This should be set in the Lambda environment
+# Hardcoded values
+host = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"  # OpenSearch domain endpoint without https://
+region = "us-east-2"
+master_username = "admin"
+master_password = "StrongPassword123!"  # Hardcoded password (in a real environment, use a more secure method)
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()

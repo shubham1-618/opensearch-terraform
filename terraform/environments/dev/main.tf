@@ -1,52 +1,52 @@
 provider "aws" {
-  region = var.region
+  region = "us-east-2"
 }
 
 # Create VPC and networking
 module "vpc" {
   source = "../../modules/vpc"
 
-  environment         = var.environment
-  vpc_cidr            = var.vpc_cidr
-  public_subnet_cidrs = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
-  azs                 = var.azs
+  environment         = "dev"
+  vpc_cidr            = "10.0.0.0/16"
+  public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  private_subnet_cidrs = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
+  azs                 = ["us-east-2a", "us-east-2b", "us-east-2c"]
 }
 
 # Create the jump server
 module "jump_server" {
   source = "../../modules/ec2"
 
-  environment      = var.environment
-  instance_type    = var.jump_server_instance_type
-  key_name         = var.key_name
-  subnet_id        = module.vpc.public_subnet_ids[0]
-  security_group_id = module.vpc.jump_server_sg_id
+  environment      = "dev"
+  instance_type    = "t3.micro"
+  key_name         = "opensearch-jump-server-key"
+  subnet_id        = "subnet-0123456789abcdef1"  # Hardcoded value
+  security_group_id = "sg-0123456789abcdef0"     # Hardcoded value
 }
 
 # Create the OpenSearch domain
 module "opensearch" {
   source = "../../modules/opensearch"
 
-  environment          = var.environment
-  region               = var.region
-  domain_name          = var.domain_name
-  engine_version       = var.engine_version
-  instance_type        = var.opensearch_instance_type
-  instance_count       = var.opensearch_instance_count
-  volume_size          = var.opensearch_volume_size
-  create_snapshot      = var.create_snapshot
-  subnet_ids           = module.vpc.private_subnet_ids
-  security_group_id    = module.vpc.opensearch_sg_id
-  master_user_name     = var.master_user_name
-  master_user_password = var.master_user_password
+  environment          = "dev"
+  region               = "us-east-2"
+  domain_name          = "dev-opensearch"
+  engine_version       = "OpenSearch_2.5"
+  instance_type        = "t3.small"
+  instance_count       = 3
+  volume_size          = 10
+  create_snapshot      = true
+  subnet_ids           = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]  # Hardcoded value
+  security_group_id    = "sg-0123456789abcdef0"     # Hardcoded value
+  master_user_name     = "admin"
+  master_user_password = "StrongPassword123!" # Hardcoded password for demo, use a secure method in production
 }
 
 # Create role mapper Lambda function
 module "role_mapper_lambda" {
   source = "../../modules/lambda"
 
-  environment       = var.environment
+  environment       = "dev"
   lambda_name       = "opensearch-role-mapper"
   lambda_source_path = "../../../lambda/role_mapper"
   handler           = "index.lambda_handler"
@@ -67,7 +67,7 @@ module "role_mapper_lambda" {
           "sts:GetCallerIdentity"
         ]
         Resource = [
-          "${module.opensearch.opensearch_domain_id}/*",
+          "arn:aws:es:us-east-2:123456789012:domain/dev-opensearch/*",
           "*"
         ]
       }
@@ -75,15 +75,15 @@ module "role_mapper_lambda" {
   })
   
   environment_variables = {
-    OPENSEARCH_ENDPOINT = module.opensearch.opensearch_endpoint
-    REGION              = var.region
-    MASTER_USERNAME     = var.master_user_name
-    MASTER_PASSWORD     = var.master_user_password
+    OPENSEARCH_ENDPOINT = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"
+    REGION              = "us-east-2"
+    MASTER_USERNAME     = "admin"
+    MASTER_PASSWORD     = "StrongPassword123!" # Hardcoded password for demo, use a secure method in production
   }
   
   vpc_config = {
-    subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [module.vpc.opensearch_sg_id]
+    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
+    security_group_ids = ["sg-0123456789abcdef0"]
   }
 }
 
@@ -91,7 +91,7 @@ module "role_mapper_lambda" {
 module "snapshot_lambda" {
   source = "../../modules/lambda"
 
-  environment       = var.environment
+  environment       = "dev"
   lambda_name       = "opensearch-snapshot-lambda"
   lambda_source_path = "../../../lambda/snapshot"
   handler           = "index.lambda_handler"
@@ -110,8 +110,8 @@ module "snapshot_lambda" {
           "s3:ListBucket"
         ]
         Resource = [
-          "arn:aws:s3:::${module.opensearch.snapshot_bucket_name}",
-          "arn:aws:s3:::${module.opensearch.snapshot_bucket_name}/*"
+          "arn:aws:s3:::dev-opensearch-snapshots-abcdef123456",
+          "arn:aws:s3:::dev-opensearch-snapshots-abcdef123456/*"
         ]
       },
       {
@@ -123,7 +123,7 @@ module "snapshot_lambda" {
           "es:ESHttpDelete"
         ]
         Resource = [
-          "${module.opensearch.opensearch_domain_id}/*"
+          "arn:aws:es:us-east-2:123456789012:domain/dev-opensearch/*"
         ]
       },
       {
@@ -132,22 +132,22 @@ module "snapshot_lambda" {
           "iam:PassRole"
         ]
         Resource = [
-          "${module.opensearch.snapshot_role_arn}"
+          "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role"
         ]
       }
     ]
   })
   
   environment_variables = {
-    OPENSEARCH_ENDPOINT = module.opensearch.opensearch_endpoint
-    BUCKET_NAME         = module.opensearch.snapshot_bucket_name
-    REGION              = var.region
-    ROLE_ARN            = module.opensearch.snapshot_role_arn
+    OPENSEARCH_ENDPOINT = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"
+    BUCKET_NAME         = "dev-opensearch-snapshots-abcdef123456"
+    REGION              = "us-east-2"
+    ROLE_ARN            = "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role"
   }
   
   vpc_config = {
-    subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [module.vpc.opensearch_sg_id]
+    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
+    security_group_ids = ["sg-0123456789abcdef0"]
   }
   
   # Run every hour (0th minute of every hour, every day)
@@ -158,7 +158,7 @@ module "snapshot_lambda" {
 module "iam_mapper_lambda" {
   source = "../../modules/lambda"
 
-  environment       = var.environment
+  environment       = "dev"
   lambda_name       = "opensearch-iam-user-mapper"
   lambda_source_path = "../../../lambda/iam_mapper"
   handler           = "index.lambda_handler"
@@ -184,7 +184,7 @@ module "iam_mapper_lambda" {
           "iam:AddUserToGroup"
         ]
         Resource = [
-          "${module.opensearch.opensearch_domain_id}/*",
+          "arn:aws:es:us-east-2:123456789012:domain/dev-opensearch/*",
           "arn:aws:iam::*:user/*",
           "arn:aws:iam::*:group/*"
         ]
@@ -193,14 +193,14 @@ module "iam_mapper_lambda" {
   })
   
   environment_variables = {
-    OPENSEARCH_ENDPOINT = module.opensearch.opensearch_endpoint
-    REGION              = var.region
-    MASTER_USERNAME     = var.master_user_name
-    MASTER_PASSWORD     = var.master_user_password
+    OPENSEARCH_ENDPOINT = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"
+    REGION              = "us-east-2"
+    MASTER_USERNAME     = "admin"
+    MASTER_PASSWORD     = "StrongPassword123!" # Hardcoded password for demo, use a secure method in production
   }
   
   vpc_config = {
-    subnet_ids         = module.vpc.private_subnet_ids
-    security_group_ids = [module.vpc.opensearch_sg_id]
+    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
+    security_group_ids = ["sg-0123456789abcdef0"]
   }
 } 

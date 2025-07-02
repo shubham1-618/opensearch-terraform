@@ -17,10 +17,10 @@ data "aws_ami" "amazon_linux" {
 # Create the jump server instance
 resource "aws_instance" "jump_server" {
   ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = var.instance_type
-  key_name               = var.key_name
-  subnet_id              = var.subnet_id
-  vpc_security_group_ids = [var.security_group_id]
+  instance_type          = "t3.micro"
+  key_name               = "opensearch-jump-server-key"
+  subnet_id              = "subnet-0123456789abcdef1" # Hardcoded subnet ID
+  vpc_security_group_ids = ["sg-0123456789abcdef1"]  # Hardcoded security group ID
 
   user_data = <<-EOF
     #!/bin/bash
@@ -35,7 +35,7 @@ resource "aws_instance" "jump_server" {
   EOF
 
   tags = {
-    Name = "${var.environment}-opensearch-jump-server"
+    Name = "dev-opensearch-jump-server"
   }
 }
 
@@ -45,6 +45,6 @@ resource "aws_eip" "jump_server_eip" {
   instance = aws_instance.jump_server.id
 
   tags = {
-    Name = "${var.environment}-opensearch-jump-server-eip"
+    Name = "dev-opensearch-jump-server-eip"
   }
 } 

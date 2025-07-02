@@ -1,32 +1,32 @@
 resource "aws_vpc" "opensearch_vpc" {
-  cidr_block           = var.vpc_cidr
+  cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
 
   tags = {
-    Name = "${var.environment}-opensearch-vpc"
+    Name = "dev-opensearch-vpc"
   }
 }
 
 resource "aws_subnet" "public_subnets" {
-  count             = length(var.public_subnet_cidrs)
+  count             = 3
   vpc_id            = aws_vpc.opensearch_vpc.id
-  cidr_block        = var.public_subnet_cidrs[count.index]
-  availability_zone = var.azs[count.index]
+  cidr_block        = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"][count.index]
+  availability_zone = ["us-east-2a", "us-east-2b", "us-east-2c"][count.index]
 
   tags = {
-    Name = "${var.environment}-opensearch-public-${count.index + 1}"
+    Name = "dev-opensearch-public-${count.index + 1}"
   }
 }
 
 resource "aws_subnet" "private_subnets" {
-  count             = length(var.private_subnet_cidrs)
+  count             = 3
   vpc_id            = aws_vpc.opensearch_vpc.id
-  cidr_block        = var.private_subnet_cidrs[count.index]
-  availability_zone = var.azs[count.index]
+  cidr_block        = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"][count.index]
+  availability_zone = ["us-east-2a", "us-east-2b", "us-east-2c"][count.index]
 
   tags = {
-    Name = "${var.environment}-opensearch-private-${count.index + 1}"
+    Name = "dev-opensearch-private-${count.index + 1}"
   }
 }
 
@@ -34,7 +34,7 @@ resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.opensearch_vpc.id
 
   tags = {
-    Name = "${var.environment}-opensearch-igw"
+    Name = "dev-opensearch-igw"
   }
 }
 
@@ -42,7 +42,7 @@ resource "aws_eip" "nat_eip" {
   domain = "vpc"
 
   tags = {
-    Name = "${var.environment}-opensearch-nat-eip"
+    Name = "dev-opensearch-nat-eip"
   }
 }
 
@@ -51,7 +51,7 @@ resource "aws_nat_gateway" "nat_gateway" {
   subnet_id     = aws_subnet.public_subnets[0].id
 
   tags = {
-    Name = "${var.environment}-opensearch-nat-gateway"
+    Name = "dev-opensearch-nat-gateway"
   }
 
   depends_on = [aws_internet_gateway.igw]
@@ -66,7 +66,7 @@ resource "aws_route_table" "public_route_table" {
   }
 
   tags = {
-    Name = "${var.environment}-opensearch-public-rt"
+    Name = "dev-opensearch-public-rt"
   }
 }
 
@@ -79,25 +79,25 @@ resource "aws_route_table" "private_route_table" {
   }
 
   tags = {
-    Name = "${var.environment}-opensearch-private-rt"
+    Name = "dev-opensearch-private-rt"
   }
 }
 
 resource "aws_route_table_association" "public_subnet_association" {
-  count          = length(var.public_subnet_cidrs)
+  count          = 3
   subnet_id      = aws_subnet.public_subnets[count.index].id
   route_table_id = aws_route_table.public_route_table.id
 }
 
 resource "aws_route_table_association" "private_subnet_association" {
-  count          = length(var.private_subnet_cidrs)
+  count          = 3
   subnet_id      = aws_subnet.private_subnets[count.index].id
   route_table_id = aws_route_table.private_route_table.id
 }
 
 # Security Groups
 resource "aws_security_group" "opensearch_sg" {
-  name        = "${var.environment}-opensearch-sg"
+  name        = "dev-opensearch-sg"
   description = "Security group for OpenSearch cluster"
   vpc_id      = aws_vpc.opensearch_vpc.id
 
@@ -126,12 +126,12 @@ resource "aws_security_group" "opensearch_sg" {
   }
 
   tags = {
-    Name = "${var.environment}-opensearch-sg"
+    Name = "dev-opensearch-sg"
   }
 }
 
 resource "aws_security_group" "jump_server_sg" {
-  name        = "${var.environment}-jump-server-sg"
+  name        = "dev-jump-server-sg"
   description = "Security group for Jump Server"
   vpc_id      = aws_vpc.opensearch_vpc.id
 
@@ -151,6 +151,6 @@ resource "aws_security_group" "jump_server_sg" {
   }
 
   tags = {
-    Name = "${var.environment}-jump-server-sg"
+    Name = "dev-jump-server-sg"
   }
 } 
