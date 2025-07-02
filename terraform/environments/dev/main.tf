@@ -40,6 +40,10 @@ module "opensearch" {
   security_group_id    = module.vpc.opensearch_sg_id
   master_user_name     = var.master_user_name
   master_user_password = var.master_user_password
+  
+  # Service-linked role configuration - disable creation if it already exists
+  create_service_linked_role = false
+  use_existing_service_linked_role = true
 }
 
 # Create role mapper Lambda function
@@ -53,6 +57,9 @@ module "role_mapper_lambda" {
   runtime           = "python3.9"
   timeout           = 120
   memory_size       = 128
+  
+  # Set to false if log groups already exist
+  create_log_group = false
   
   policy_json = jsonencode({
     Version = "2012-10-17"
@@ -98,6 +105,15 @@ module "snapshot_lambda" {
   runtime           = "python3.9"
   timeout           = 300
   memory_size       = 256
+  
+  # Error handling configuration
+  max_retries       = 3
+  retry_delay       = 5
+  log_retention_days = 30
+  create_error_alarm = true
+  
+  # Set to false if log groups already exist
+  create_log_group = false
   
   policy_json = jsonencode({
     Version = "2012-10-17"
@@ -165,6 +181,9 @@ module "iam_mapper_lambda" {
   runtime           = "python3.9"
   timeout           = 120
   memory_size       = 128
+  
+  # Set to false if log groups already exist
+  create_log_group = false
   
   policy_json = jsonencode({
     Version = "2012-10-17"

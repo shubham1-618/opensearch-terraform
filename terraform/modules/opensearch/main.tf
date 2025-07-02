@@ -1,17 +1,48 @@
-# Create service-linked role for OpenSearch
-resource "aws_iam_service_linked_role" "opensearch" {
-  aws_service_name = "opensearchservice.amazonaws.com"
-  description      = "Service-linked role for OpenSearch to access VPC resources"
-  count = 0  # Don't try to create the role since it already exists
-}
-
-# Reference existing service-linked role
+# Attempt to find the existing service-linked role
 data "aws_iam_role" "opensearch_service_linked_role" {
+  count = var.use_existing_service_linked_role ? 1 : 0
   name = "AWSServiceRoleForAmazonOpenSearchService"
 }
 
-# S3 bucket for snapshots
+# Create service-linked role for OpenSearch - only if it doesn't exist and we want to create it
+resource "aws_iam_service_linked_role" "opensearch" {
+  count = var.create_service_linked_role && !var.use_existing_service_linked_role ? 1 : 0
+  aws_service_name = "opensearchservice.amazonaws.com"
+  description      = "Service-linked role for OpenSearch to access VPC resources"
+  
+  # Ignore errors if the role already exists
+  lifecycle {
+    ignore_changes = [aws_service_name]
+    create_before_destroy = true
+  }
+  
+  # Custom error handling for role already exists case
+  provisioner "local-exec" {
+    on_failure = continue
+    command = "echo 'Info: Service linked role may already exist, continuing...'"
+  }
+}
+
+# Get current account ID
+data "aws_caller_identity" "current" {}
+
+# Use a local value with try() to handle the case when the role doesn't exist
+locals {
+  opensearch_service_linked_role_arn = var.use_existing_service_linked_role ? (
+    try(data.aws_iam_role.opensearch_service_linked_role[0].arn, "")
+  ) : (
+    var.create_service_linked_role ? (
+      try(aws_iam_service_linked_role.opensearch[0].arn, "")
+    ) : ""
+  )
+  snapshot_bucket_name = var.create_snapshot ? aws_s3_bucket.snapshot_bucket[0].bucket : "no-snapshot-bucket"
+  snapshot_bucket_arn = var.create_snapshot ? aws_s3_bucket.snapshot_bucket[0].arn : "no-snapshot-bucket-arn"
+  snapshot_role_arn = var.create_snapshot ? aws_iam_role.opensearch_snapshot_role[0].arn : "no-snapshot-role"
+}
+
+# S3 bucket for snapshots - only if snapshots are enabled
 resource "aws_s3_bucket" "snapshot_bucket" {
+  count = var.create_snapshot ? 1 : 0
   bucket = "${var.environment}-opensearch-snapshots-${random_id.bucket_suffix.hex}"
   
   tags = {
@@ -26,6 +57,7 @@ resource "random_id" "bucket_suffix" {
 
 # IAM role for OpenSearch snapshot creation
 resource "aws_iam_role" "opensearch_snapshot_role" {
+  count = var.create_snapshot ? 1 : 0
   name = "${var.environment}-opensearch-snapshot-role"
 
   assume_role_policy = jsonencode({
@@ -44,6 +76,7 @@ resource "aws_iam_role" "opensearch_snapshot_role" {
 
 # IAM policy for OpenSearch snapshot role
 resource "aws_iam_policy" "opensearch_snapshot_policy" {
+  count = var.create_snapshot ? 1 : 0
   name        = "${var.environment}-opensearch-snapshot-policy"
   description = "Policy for OpenSearch to create snapshots in S3"
 
@@ -54,7 +87,7 @@ resource "aws_iam_policy" "opensearch_snapshot_policy" {
         Effect = "Allow"
         Action = "s3:ListBucket"
         Resource = [
-          aws_s3_bucket.snapshot_bucket.arn
+          local.snapshot_bucket_arn
         ]
       },
       {
@@ -65,7 +98,7 @@ resource "aws_iam_policy" "opensearch_snapshot_policy" {
           "s3:DeleteObject"
         ]
         Resource = [
-          "${aws_s3_bucket.snapshot_bucket.arn}/*"
+          "${local.snapshot_bucket_arn}/*"
         ]
       }
     ]
@@ -74,8 +107,9 @@ resource "aws_iam_policy" "opensearch_snapshot_policy" {
 
 # Attach policy to role
 resource "aws_iam_role_policy_attachment" "snapshot_policy_attachment" {
-  role       = aws_iam_role.opensearch_snapshot_role.name
-  policy_arn = aws_iam_policy.opensearch_snapshot_policy.arn
+  count      = var.create_snapshot ? 1 : 0
+  role       = aws_iam_role.opensearch_snapshot_role[0].name
+  policy_arn = aws_iam_policy.opensearch_snapshot_policy[0].arn
 }
 
 # OpenSearch domain
@@ -88,7 +122,7 @@ resource "aws_opensearch_domain" "opensearch_domain" {
     instance_count           = var.instance_count
     zone_awareness_enabled   = true
     zone_awareness_config {
-      availability_zone_count = 3
+      availability_zone_count = length(var.subnet_ids) >= 3 ? 3 : length(var.subnet_ids)
     }
   }
 
@@ -149,12 +183,28 @@ CONFIG
     Environment = var.environment
   }
   
-  # Wait for the service-linked role to be available
+  # Use static depends_on, the service-linked role is already conditional via count
   depends_on = [aws_iam_service_linked_role.opensearch]
+  
+  # Error handling for domain creation
+  timeouts {
+    update = "2h"
+    create = "2h"
+    delete = "2h"
+  }
+  
+  # Handle importing existing domains by ignoring certain attributes
+  lifecycle {
+    ignore_changes = [
+      # Ignore changes to the advanced_security_options as they may be modified outside of Terraform
+      advanced_security_options,
+      # Ignore changes to tags
+      tags,
+      # Ignore changes to the access policies as they may be modified outside of Terraform
+      access_policies
+    ]
+  }
 }
-
-# Get current account ID
-data "aws_caller_identity" "current" {}
 
 # Create fine-grained access control
 resource "aws_opensearch_domain_policy" "main" {

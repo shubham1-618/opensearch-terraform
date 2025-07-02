@@ -65,4 +65,16 @@ variable "create_snapshot" {
   description = "Whether to enable snapshot creation"
   type        = bool
   default     = true
+}
+
+variable "create_service_linked_role" {
+  description = "Whether to create the OpenSearch service-linked role"
+  type        = bool
+  default     = true
+}
+
+variable "use_existing_service_linked_role" {
+  description = "Whether to use an existing OpenSearch service-linked role"
+  type        = bool
+  default     = false
 } 

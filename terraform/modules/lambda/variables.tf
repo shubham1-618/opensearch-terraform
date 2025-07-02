@@ -61,4 +61,40 @@ variable "schedule_expression" {
   description = "CloudWatch Events schedule expression for Lambda function"
   type        = string
   default     = null
+}
+
+variable "max_retries" {
+  description = "Maximum number of retries for Lambda operations"
+  type        = number
+  default     = 3
+}
+
+variable "retry_delay" {
+  description = "Delay in seconds between retry attempts"
+  type        = number
+  default     = 5
+}
+
+variable "log_retention_days" {
+  description = "Number of days to retain Lambda logs"
+  type        = number
+  default     = 14
+}
+
+variable "create_function_url" {
+  description = "Whether to create a function URL for the Lambda"
+  type        = bool
+  default     = false
+}
+
+variable "create_error_alarm" {
+  description = "Whether to create CloudWatch alarm for Lambda errors"
+  type        = bool
+  default     = false
+}
+
+variable "create_log_group" {
+  description = "Whether to create CloudWatch Log Group for the Lambda function (set to false if it already exists)"
+  type        = bool
+  default     = true
 } 

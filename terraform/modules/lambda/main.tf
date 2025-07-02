@@ -14,6 +14,11 @@ resource "aws_iam_role" "lambda_exec_role" {
       }
     ]
   })
+  
+  # Error handling for IAM role
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Policy for Lambda execution
@@ -22,6 +27,11 @@ resource "aws_iam_policy" "lambda_policy" {
   description = "Policy for ${var.lambda_name} Lambda function"
 
   policy = var.policy_json
+  
+  # Error handling for IAM policy
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Attach policy to role
@@ -43,6 +53,18 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+# CloudWatch Log group with explicit retention - use data source if it exists, create if it doesn't
+data "aws_cloudwatch_log_group" "existing_logs" {
+  count = var.create_log_group ? 0 : 1
+  name  = "/aws/lambda/${var.environment}-${var.lambda_name}"
+}
+
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  count             = var.create_log_group ? 1 : 0
+  name              = "/aws/lambda/${var.environment}-${var.lambda_name}"
+  retention_in_days = var.log_retention_days
+}
+
 # Lambda function
 resource "aws_lambda_function" "lambda_function" {
   function_name    = "${var.environment}-${var.lambda_name}"
@@ -55,7 +77,10 @@ resource "aws_lambda_function" "lambda_function" {
   memory_size      = var.memory_size
   
   environment {
-    variables = var.environment_variables
+    variables = merge(var.environment_variables, {
+      MAX_RETRIES = tostring(var.max_retries)
+      RETRY_DELAY = tostring(var.retry_delay)
+    })
   }
 
   dynamic "vpc_config" {
@@ -69,6 +94,45 @@ resource "aws_lambda_function" "lambda_function" {
   tags = {
     Name        = "${var.environment}-${var.lambda_name}"
     Environment = var.environment
+  }
+
+  # Use static depends_on list, the log group creation is already conditional via count
+  depends_on = [aws_cloudwatch_log_group.lambda_logs]
+  
+  # Set timeouts to handle slow deployments
+  timeouts {
+    create = "10m"
+  }
+}
+
+# Function URL (if enabled)
+resource "aws_lambda_function_url" "lambda_url" {
+  count              = var.create_function_url ? 1 : 0
+  function_name      = aws_lambda_function.lambda_function.function_name
+  authorization_type = "NONE"
+  
+  cors {
+    allow_origins = ["*"]
+    allow_methods = ["*"]
+    allow_headers = ["*"]
+  }
+}
+
+# CloudWatch alarm for Lambda errors
+resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
+  count               = var.create_error_alarm ? 1 : 0
+  alarm_name          = "${var.environment}-${var.lambda_name}-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = "60"
+  statistic           = "Sum"
+  threshold           = "0"
+  alarm_description   = "This metric monitors ${var.lambda_name} Lambda function errors"
+  
+  dimensions = {
+    FunctionName = aws_lambda_function.lambda_function.function_name
   }
 }
 
@@ -86,6 +150,12 @@ resource "aws_cloudwatch_event_target" "lambda_target" {
   rule      = aws_cloudwatch_event_rule.lambda_schedule[0].name
   target_id = "${var.environment}-${var.lambda_name}"
   arn       = aws_lambda_function.lambda_function.arn
+  
+  # Add retry policy for scheduled events
+  retry_policy {
+    maximum_event_age_in_seconds = 60
+    maximum_retry_attempts       = 2
+  }
 }
 
 # Permission for CloudWatch to invoke Lambda

@@ -18,12 +18,17 @@ output "opensearch_dashboard_endpoint" {
   value       = aws_opensearch_domain.opensearch_domain.dashboard_endpoint
 }
 
+output "opensearch_arn" {
+  description = "ARN of the OpenSearch domain"
+  value       = aws_opensearch_domain.opensearch_domain.arn
+}
+
 output "snapshot_bucket_name" {
   description = "Name of the S3 bucket for snapshots"
-  value       = aws_s3_bucket.snapshot_bucket.id
+  value       = local.snapshot_bucket_name
 }
 
 output "snapshot_role_arn" {
   description = "ARN of the IAM role for OpenSearch snapshots"
-  value       = aws_iam_role.opensearch_snapshot_role.arn
+  value       = local.snapshot_role_arn
 } 
