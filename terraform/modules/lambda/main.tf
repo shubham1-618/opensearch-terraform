@@ -8,9 +8,18 @@ variable "lambda_name" {
   description = "Name of the Lambda function"
 }
 
+variable "lambda_source_path" {
+  description = "Path to the Lambda function source code"
+}
+
 variable "handler" {
   description = "Lambda function handler"
   default = "index.lambda_handler"
+}
+
+variable "runtime" {
+  description = "Lambda function runtime"
+  default = "python3.9"
 }
 
 variable "timeout" {
@@ -90,7 +99,7 @@ resource "aws_lambda_function" "lambda_function" {
   function_name    = "${var.environment}-${var.lambda_name}"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = var.handler
-  runtime          = "python3.9"
+  runtime          = var.runtime
   filename         = "${path.module}/files/${var.lambda_name}.zip"
   source_code_hash = filebase64sha256("${path.module}/files/${var.lambda_name}.zip")
   timeout          = var.timeout
@@ -100,21 +109,16 @@ resource "aws_lambda_function" "lambda_function" {
     variables = var.environment_variables  # Each Lambda has different env vars, so we keep as parameter
   }
 
-  vpc_config {
-    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
-    security_group_ids = ["sg-0123456789abcdef0"]
-  }
-
   tags = {
-    Name        = "dev-${var.lambda_name}"
-    Environment = "dev"
+    Name        = "${var.environment}-${var.lambda_name}"
+    Environment = var.environment
   }
 }
 
 # CloudWatch Event Rule for scheduling (if enabled)
 resource "aws_cloudwatch_event_rule" "lambda_schedule" {
   count               = var.schedule_expression != null ? 1 : 0
-  name                = "dev-${var.lambda_name}-schedule"
+  name                = "${var.environment}-${var.lambda_name}-schedule"
   description         = "Schedule for ${var.lambda_name} Lambda function"
   schedule_expression = var.schedule_expression
 }
@@ -123,7 +127,7 @@ resource "aws_cloudwatch_event_rule" "lambda_schedule" {
 resource "aws_cloudwatch_event_target" "lambda_target" {
   count     = var.schedule_expression != null ? 1 : 0
   rule      = aws_cloudwatch_event_rule.lambda_schedule[0].name
-  target_id = "dev-${var.lambda_name}"
+  target_id = "${var.environment}-${var.lambda_name}"
   arn       = aws_lambda_function.lambda_function.arn
 }
 

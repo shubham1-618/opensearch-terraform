@@ -2,44 +2,68 @@ provider "aws" {
   region = "us-east-2"
 }
 
-# Create VPC and networking
-module "vpc" {
-  source = "../../modules/vpc"
-
-  environment         = "dev"
-  vpc_cidr            = "10.0.0.0/16"
-  public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-  private_subnet_cidrs = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
-  azs                 = ["us-east-2a", "us-east-2b", "us-east-2c"]
+# Create S3 bucket for snapshots
+resource "aws_s3_bucket" "snapshot_bucket" {
+  bucket = "dev-opensearch-snapshots-abcdef123456"
+  
+  tags = {
+    Name        = "dev-opensearch-snapshots"
+    Environment = "dev"
+  }
 }
 
-# Create the jump server
-module "jump_server" {
-  source = "../../modules/ec2"
+# IAM role for OpenSearch snapshot creation
+resource "aws_iam_role" "opensearch_snapshot_role" {
+  name = "dev-opensearch-snapshot-role"
 
-  environment      = "dev"
-  instance_type    = "t3.micro"
-  key_name         = "opensearch-jump-server-key"
-  subnet_id        = "subnet-0123456789abcdef1"  # Hardcoded value
-  security_group_id = "sg-0123456789abcdef0"     # Hardcoded value
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = ["opensearch.amazonaws.com", "es.amazonaws.com"]
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
 }
 
-# Create the OpenSearch domain
-module "opensearch" {
-  source = "../../modules/opensearch"
+# IAM policy for OpenSearch snapshot role
+resource "aws_iam_policy" "opensearch_snapshot_policy" {
+  name        = "dev-opensearch-snapshot-policy"
+  description = "Policy for OpenSearch to create snapshots in S3"
 
-  environment          = "dev"
-  region               = "us-east-2"
-  domain_name          = "dev-opensearch"
-  engine_version       = "OpenSearch_2.5"
-  instance_type        = "t3.small"
-  instance_count       = 3
-  volume_size          = 10
-  create_snapshot      = true
-  subnet_ids           = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]  # Hardcoded value
-  security_group_id    = "sg-0123456789abcdef0"     # Hardcoded value
-  master_user_name     = "admin"
-  master_user_password = "StrongPassword123!" # Hardcoded password for demo, use a secure method in production
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = "s3:ListBucket"
+        Resource = [
+          aws_s3_bucket.snapshot_bucket.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          "${aws_s3_bucket.snapshot_bucket.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Attach policy to role
+resource "aws_iam_role_policy_attachment" "snapshot_policy_attachment" {
+  role       = aws_iam_role.opensearch_snapshot_role.name
+  policy_arn = aws_iam_policy.opensearch_snapshot_policy.arn
 }
 
 # Create role mapper Lambda function
@@ -78,12 +102,7 @@ module "role_mapper_lambda" {
     OPENSEARCH_ENDPOINT = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"
     REGION              = "us-east-2"
     MASTER_USERNAME     = "admin"
-    MASTER_PASSWORD     = "StrongPassword123!" # Hardcoded password for demo, use a secure method in production
-  }
-  
-  vpc_config = {
-    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
-    security_group_ids = ["sg-0123456789abcdef0"]
+    MASTER_PASSWORD     = "StrongPassword123!"
   }
 }
 
@@ -110,8 +129,8 @@ module "snapshot_lambda" {
           "s3:ListBucket"
         ]
         Resource = [
-          "arn:aws:s3:::dev-opensearch-snapshots-abcdef123456",
-          "arn:aws:s3:::dev-opensearch-snapshots-abcdef123456/*"
+          aws_s3_bucket.snapshot_bucket.arn,
+          "${aws_s3_bucket.snapshot_bucket.arn}/*"
         ]
       },
       {
@@ -132,7 +151,7 @@ module "snapshot_lambda" {
           "iam:PassRole"
         ]
         Resource = [
-          "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role"
+          aws_iam_role.opensearch_snapshot_role.arn
         ]
       }
     ]
@@ -140,14 +159,9 @@ module "snapshot_lambda" {
   
   environment_variables = {
     OPENSEARCH_ENDPOINT = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"
-    BUCKET_NAME         = "dev-opensearch-snapshots-abcdef123456"
+    BUCKET_NAME         = aws_s3_bucket.snapshot_bucket.id
     REGION              = "us-east-2"
-    ROLE_ARN            = "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role"
-  }
-  
-  vpc_config = {
-    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
-    security_group_ids = ["sg-0123456789abcdef0"]
+    ROLE_ARN            = aws_iam_role.opensearch_snapshot_role.arn
   }
   
   # Run every hour (0th minute of every hour, every day)
@@ -181,7 +195,11 @@ module "iam_mapper_lambda" {
           "iam:CreateLoginProfile",
           "iam:CreateAccessKey",
           "iam:ListGroupsForUser",
-          "iam:AddUserToGroup"
+          "iam:AddUserToGroup",
+          "iam:UpdateLoginProfile",
+          "iam:ListAccessKeys",
+          "iam:DeleteAccessKey",
+          "sts:GetCallerIdentity"
         ]
         Resource = [
           "arn:aws:es:us-east-2:123456789012:domain/dev-opensearch/*",
@@ -196,11 +214,6 @@ module "iam_mapper_lambda" {
     OPENSEARCH_ENDPOINT = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"
     REGION              = "us-east-2"
     MASTER_USERNAME     = "admin"
-    MASTER_PASSWORD     = "StrongPassword123!" # Hardcoded password for demo, use a secure method in production
-  }
-  
-  vpc_config = {
-    subnet_ids         = ["subnet-0123456789abcdef4", "subnet-0123456789abcdef5", "subnet-0123456789abcdef6"]
-    security_group_ids = ["sg-0123456789abcdef0"]
+    MASTER_PASSWORD     = "StrongPassword123!"
   }
 } 

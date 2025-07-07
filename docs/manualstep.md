@@ -1,179 +1,181 @@
-# Manual Steps for OpenSearch Terraform Project
+# Manual Steps for OpenSearch Lambda Automation
 
-This document outlines manual steps required for complete setup of the OpenSearch environment.
+This document outlines the manual steps required to work with the Lambda functions and your existing OpenSearch domain.
 
-## SSH Key Creation
+## Table of Contents
+1. [Updating Lambda Environment Variables](#updating-lambda-environment-variables)
+2. [Triggering Lambda Functions Manually](#triggering-lambda-functions-manually)
+3. [Creating and Configuring S3 Snapshot Repository](#creating-and-configuring-s3-snapshot-repository)
+4. [Restoring from Snapshots](#restoring-from-snapshots)
+5. [Accessing OpenSearch Dashboard](#accessing-opensearch-dashboard)
 
-Before deploying the infrastructure with Terraform, create an SSH key pair in the AWS console:
+## Updating Lambda Environment Variables
 
-1. Go to EC2 dashboard in the AWS console
-2. Navigate to "Key Pairs" in the left sidebar
-3. Click "Create key pair"
-4. Enter name: `opensearch-jump-server-key`
-5. Select key pair type: RSA
-6. Select format: .pem
-7. Click "Create key pair"
-8. The private key file (.pem) will download automatically
-9. Save this file securely - you will need it to SSH into the jump server
+Before deploying with Terraform, update the environment variables in `terraform/environments/dev/main.tf` with your existing OpenSearch domain information:
 
+1. Open `terraform/environments/dev/main.tf`
+2. Find each Lambda function configuration and update:
+   - `OPENSEARCH_ENDPOINT`: Your OpenSearch domain endpoint (without https://)
+   - `REGION`: AWS region where your OpenSearch domain is located
+   - `MASTER_USERNAME`: Admin username for your OpenSearch domain
+   - `MASTER_PASSWORD`: Admin password for your OpenSearch domain
 
-## Terraform Deployment Instructions
-
-To deploy the OpenSearch infrastructure using Terraform:
-
-1. Ensure you have Terraform installed (version >= 1.0.0)
-2. Navigate to the environment directory:
-   ```
-   cd opensearch-terraform/terraform/environments/dev
-   ```
-3. Initialize Terraform to download providers and modules:
-   ```
-   terraform init
-   ```
-4. Create a plan to see what resources will be created:
-   ```
-   terraform plan
-   ```
-5. Apply the configuration to create the resources:
-   ```
-   terraform apply
-   ```
-6. When you're done with the resources, you can destroy them:
-   ```
-   terraform destroy
-   ```
-
-
-## SSH Tunneling Instructions
-
-To securely access the OpenSearch dashboard through the jump server:
-
-1. Make sure you have the `opensearch-jump-server-key.pem` file saved locally
-2. Set proper permissions on the key file:
-
-```bash
-chmod 400 opensearch-jump-server-key.pem
-```
-
-3. Create an SSH tunnel with port forwarding to the OpenSearch dashboard:
-
-```bash
-ssh -i opensearch-jump-server-key.pem -L 9200:OPENSEARCH_ENDPOINT:443 ec2-user@JUMP_SERVER_PUBLIC_IP
-```
-
-Replace:
-- `OPENSEARCH_ENDPOINT` with your OpenSearch domain endpoint (without https://)
-- `JUMP_SERVER_PUBLIC_IP` with the public IP of the jump server
-
-4. Once the SSH tunnel is established, access the OpenSearch dashboard at:
-
-```
-https://localhost:9200/_dashboards/
-```
-
-5. Sign in using your IAM credentials
-
-## Configuring S3 Snapshot Repository
-
-### Manual Configuration (via Dashboard)
-
-1. Access the OpenSearch dashboard using SSH tunneling
-2. Navigate to "Snapshots Management" > "Repositories"
-3. Click "Create repository"
-4. Enter the following details:
-   - Repository name: `s3-snapshots`
-   - Repository type: `S3`
-   - Bucket name: Use the bucket created by Terraform
-   - Path: `snapshots`
-   - Role ARN: Use the role ARN for the OpenSearch snapshot role
-5. Click "Create"
-
-### Automated Configuration
-
-The Terraform configuration automatically sets up the S3 repository via the Lambda function. No manual steps are required unless you want to verify the configuration via the dashboard.
-
-## Steps to Restore Snapshot
-
-To restore data from a snapshot:
-
-1. Access the OpenSearch dashboard using SSH tunneling
-2. Navigate to "Snapshots Management" > "Snapshots"
-3. Select the repository containing the snapshot
-4. Find the snapshot you want to restore and click "Restore"
-5. In the dialog:
-   - Select indices to restore
-   - Rename pattern (optional)
-   - Adjust restore settings as needed
-6. Click "Restore" to begin the restoration process
-7. Monitor the restore job in the "Restore Status" section
-
-## Triggering Lambda Functions
-
-### Mapping IAM User to OpenSearch Dashboard
-
-The IAM user mapping Lambda function is triggered automatically when a new IAM user is created. For manual triggering:
-
-1. Go to AWS Lambda console
-2. Find the function named `opensearch-iam-user-mapper`
-3. Click "Test" tab
-4. Create a new test event with the following JSON structure:
-
-```json
-{
-  "userName": "USERNAME_TO_MAP"
+Example:
+```terraform
+environment_variables = {
+  OPENSEARCH_ENDPOINT = "your-opensearch-domain.region.es.amazonaws.com"
+  REGION              = "us-east-2"
+  MASTER_USERNAME     = "your-admin-username"
+  MASTER_PASSWORD     = "your-admin-password"
 }
 ```
 
-5. Click "Test" to trigger the function
+## Triggering Lambda Functions Manually
 
-### Manually Triggering Snapshot Lambda
+### IAM User Mapper Lambda
 
-To manually trigger the snapshot Lambda function:
+This Lambda function maps IAM users to OpenSearch roles.
 
-1. Go to AWS Lambda console
-2. Find the function named `dev-opensearch-snapshot-lambda`
-3. Click "Test" tab
-4. Create a new test event with an empty JSON structure: `{}`
-5. Click "Test" to trigger the function
+1. Open the AWS Lambda console
+2. Navigate to the function `dev-opensearch-iam-user-mapper`
+3. Click on the "Test" tab
+4. Create a new event with the following JSON structure:
+
+```json
+{
+  "userName": "opensearch-user",
+  "createIfMissing": true,
+  "createInternalUser": true,
+  "opensearchRole": "all_access",
+  "forceCredentialReset": false
+}
+```
+
+5. Click "Test" to invoke the function
+6. The function will:
+   - Create the IAM user if it doesn't exist
+   - Generate a secure password and access keys
+   - Create an internal user in OpenSearch
+   - Map the user to the specified role
+
+### Role Mapper Lambda
+
+This Lambda function maps IAM roles to OpenSearch roles.
+
+1. Open the AWS Lambda console
+2. Navigate to the function `dev-opensearch-role-mapper`
+3. Click on the "Test" tab
+4. Create a new event with the following JSON structure:
+
+```json
+{
+  "roleName": "your-role-name",
+  "opensearchRole": "all_access"
+}
+```
+
+5. Click "Test" to invoke the function
+6. The function will map the IAM role to the specified OpenSearch role
+
+## Creating and Configuring S3 Snapshot Repository
+
+### Automatic Configuration
+
+The snapshot Lambda function automatically creates an S3 repository when it runs for the first time. No manual action is required.
+
+### Manual Configuration via Dashboard
+
+If you want to verify or manually configure the S3 repository:
+
+1. Log in to your OpenSearch Dashboard
+2. Navigate to "Management" > "Snapshot Management" > "Repositories"
+3. Click "Register repository"
+4. Select "S3" as the repository type
+5. Enter:
+   - Repository name: `s3-snapshots`
+   - Bucket name: `dev-opensearch-snapshots-abcdef123456` (or your actual bucket name)
+   - Region: `us-east-2` (or your actual region)
+   - Role ARN: `arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role` (from Terraform output)
+
+## Restoring from Snapshots
+
+To restore an index from a snapshot:
+
+1. Log in to your OpenSearch Dashboard
+2. Navigate to "Management" > "Snapshot Management" > "Snapshots"
+3. Find the snapshot you want to restore from
+4. Click "Restore" next to the snapshot
+5. In the restore dialog:
+   - Select the indices you want to restore
+   - Optionally, rename indices during restore
+   - Configure additional restore settings
+6. Click "Restore" to start the restoration process
+
+### Restore via API
+
+You can also restore snapshots via the API:
+
+```bash
+# Get a list of available snapshots
+curl -XGET "https://your-opensearch-endpoint.us-east-2.es.amazonaws.com/_snapshot/s3-snapshots/_all" -u "admin:password"
+
+# Restore a specific snapshot
+curl -XPOST "https://your-opensearch-endpoint.us-east-2.es.amazonaws.com/_snapshot/s3-snapshots/snapshot-name/_restore" -u "admin:password" -d '{
+  "indices": "index-to-restore",
+  "rename_pattern": "index-(.+)",
+  "rename_replacement": "restored-index-$1"
+}'
+```
+
+## Accessing OpenSearch Dashboard
+
+To access your OpenSearch Dashboard:
+
+1. Navigate to your OpenSearch Dashboard URL:
+   `https://your-opensearch-endpoint.us-east-2.es.amazonaws.com/_dashboards/`
+
+2. Log in with:
+   - Username: The admin username for your domain
+   - Password: The admin password for your domain
+
+3. If you've mapped IAM users, they can also log in with their credentials
+
+### For Public Access OpenSearch Domains
+
+If your OpenSearch domain has public access:
+- Access the dashboard directly using the dashboard URL
+
+### For VPC OpenSearch Domains
+
+If your OpenSearch domain is in a VPC:
+1. Connect to a bastion host or EC2 instance in the same VPC
+2. Set up an SSH tunnel:
+
+```bash
+ssh -i your-key.pem -N -L 9200:your-opensearch-endpoint.us-east-2.es.amazonaws.com:443 ec2-user@bastion-host-ip
+```
+
+3. Access the dashboard through: `https://localhost:9200/_dashboards/`
 
 ## Troubleshooting
 
-### Dashboard Access Issues
+### Lambda Function Errors
 
-- Verify that the SSH tunnel is properly established
-- Check that your IAM user has been mapped correctly
-- Review the security group rules for both jump server and OpenSearch domain
+If the Lambda functions encounter errors:
+1. Check CloudWatch Logs for the specific function
+2. Verify the OpenSearch domain endpoint and credentials
+3. Ensure IAM permissions are correctly configured
 
-### Snapshot Issues
+### Snapshot Failures
 
-- Check Lambda function CloudWatch logs for errors
-- Verify IAM role permissions for the S3 bucket
-- Ensure OpenSearch service has permissions to assume the snapshot role
+If snapshots fail:
+1. Check that the S3 bucket exists
+2. Verify the OpenSearch domain has permissions to access the bucket
+3. Check the IAM role has the correct permissions
 
-### IAM Mapping Issues
+### Authentication Issues
 
-- Check Lambda function CloudWatch logs
-- Verify that fine-grained access control is enabled on the OpenSearch domain
-- Ensure the mapping role has proper permissions 
-
-
-## Important Notes
-
-### OpenSearch Service-Linked Roles
-
-This Terraform configuration creates an AWS service-linked role for OpenSearch. This role is required to give Amazon OpenSearch Service permissions to access your VPC. 
-
-If you've previously created this role in your AWS account, you may see an error message like:
-```
-Error: Error creating service-linked role with name AWSServiceRoleForAmazonOpenSearchService: InvalidInput: Service-linked role AWSServiceRoleForAmazonOpenSearchService already exists.
-```
-
-This error can be safely ignored, as it means the role already exists in your account and can be used by the OpenSearch domain.
-
-### OpenSearch Instance Types
-
-When choosing an instance type for OpenSearch, make sure to use the proper format with the `.search` suffix. For example:
-- `t3.small.search` instead of `t3.small`
-- `m5.large.search` instead of `m5.large`
-
-AWS only allows specific instance types for OpenSearch domains. If you encounter an error related to instance types, check the error message for a list of supported types or refer to the AWS documentation.
+If you can't authenticate:
+1. Verify admin credentials
+2. Check that the user is correctly mapped to a role
+3. Look for any security group restrictions 

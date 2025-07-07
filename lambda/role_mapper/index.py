@@ -1,13 +1,14 @@
 import boto3
 import json
 import requests
+import os
 from requests_aws4auth import AWS4Auth
 
-# Hardcoded values
-host = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"  # OpenSearch domain endpoint without https://
-region = "us-east-2"
-master_username = "admin"
-master_password = "StrongPassword123!"  # Hardcoded password (in a real environment, use a more secure method)
+# Environment variables with hardcoded fallbacks for client's existing OpenSearch domain
+host = os.environ.get('OPENSEARCH_ENDPOINT', "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com")
+region = os.environ.get('REGION', "us-east-2")
+master_username = os.environ.get('MASTER_USERNAME', "admin")
+master_password = os.environ.get('MASTER_PASSWORD', "StrongPassword123!")
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()
@@ -32,8 +33,8 @@ def lambda_handler(event, context):
         # Extract parameters from event
         role_name = event.get('roleName')
         role_arn = event.get('roleArn')
-        opensearch_role = "all_access"  # Hardcoded to all_access
-        account_id = event.get('accountId', "123456789012")  # Hardcoded account ID if not provided
+        opensearch_role = event.get('opensearchRole', "all_access")  # Default to all_access
+        account_id = event.get('accountId')
         
         # Validate required parameters
         if not (role_name or role_arn):
@@ -44,6 +45,9 @@ def lambda_handler(event, context):
             
         # Construct role ARN if not provided
         if not role_arn:
+            # Get account ID if not provided
+            if not account_id:
+                account_id = boto3.client('sts').get_caller_identity()['Account']
             role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
         
         # Map the role to specified OpenSearch role

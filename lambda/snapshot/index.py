@@ -1,14 +1,15 @@
 import boto3
 import json
 import requests
+import os
 from requests_aws4auth import AWS4Auth
 from datetime import datetime
 
-# Hardcoded values
-host = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"  # OpenSearch domain endpoint without https://
-region = "us-east-2"
-bucket_name = "dev-opensearch-snapshots-abcdef123456"
-role_arn = "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role"
+# Environment variables with hardcoded fallbacks for client's existing OpenSearch domain
+host = os.environ.get('OPENSEARCH_ENDPOINT', "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com")
+region = os.environ.get('REGION', "us-east-2")
+bucket_name = os.environ.get('BUCKET_NAME', "dev-opensearch-snapshots-abcdef123456")
+role_arn = os.environ.get('ROLE_ARN', "arn:aws:iam::123456789012:role/dev-opensearch-snapshot-role")
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()
@@ -16,7 +17,6 @@ awsauth = AWS4Auth(credentials.access_key, credentials.secret_key, region, 'es',
 
 # Endpoints for repository and snapshot API
 repository_endpoint = f'https://{host}/_snapshot/s3-snapshots'
-snapshot_endpoint = f'https://{host}/_snapshot/s3-snapshots/snapshot-'
 
 def lambda_handler(event, context):
     """

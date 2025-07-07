@@ -1,34 +1,38 @@
-# OpenSearch AWS Terraform Project
+# OpenSearch AWS Lambda Automation
 
-This project deploys a fully configured OpenSearch domain on AWS with automated snapshots, IAM user mapping, and secure access via a jump server.
+This project provides Lambda functions and S3 bucket configurations for enhancing an existing OpenSearch domain with automated snapshots and IAM user/role mapping.
 
-## Architecture
+## Overview
 
-![Project Architecture](https://mermaid.ink/img/pako:eNp1kslqwzAQhl9FzCkFd6dO6KXQkr2hjRfRstaOK0uuJSdgyLt3ZDnQLnrQzP9_g5ZDapRI1NQrl_VJQcOd5zqrqbYt9BqK3KjGvmvnHRSEWe9B2s5BYbXHrmWkeJY6W4Fw4z5C4aRmweFOhsIaYSTAYYrdMSvACGkOYWEsfAfYMx15r1BerJp1wMMXJ3Qno3ztBy-NTmajmTGSWxnELys3SP0fP_GDQYPXfatEfBtjO-l1A9XiGxf2gRnJvDexduk36wOLH8K7x8wbl73FaZ80FRjbxfXlYVHbYt5eSov3PEtRjG-J-A--2F8w-ju8YrqKmKbDpBZTUZlQNMswP6eqGWL7po6UcZlaz1QYoZfBxLQbQyG_Spj4nFYSBXfKnIJZIFvLG6qDu6SXdKOxPVGmJz_mG9U?)
+This project deploys:
 
-The project creates:
+1. **Lambda Functions**:
+   - **IAM User Mapper**: Maps IAM users to OpenSearch roles and creates internal users
+   - **Role Mapper**: Maps IAM roles to OpenSearch roles
+   - **Snapshot**: Creates and manages automated hourly snapshots
 
-- OpenSearch domain with 3 data nodes using t3.small instances
-- S3 bucket for storing snapshots
-- Lambda functions for automated snapshots and IAM user mapping
-- VPC with public and private subnets
-- Security groups for controlled access
-- EC2 jump server for secure access via SSH tunneling
+2. **S3 Bucket**:
+   - Securely configured for storing OpenSearch snapshots
 
 ## Features
 
-- **Parameterized snapshots**: Enable/disable snapshot creation via Terraform variables
 - **Automated hourly snapshots**: Lambda function scheduled to take snapshots every hour
-- **IAM user mapping**: Automatic mapping of IAM users to the OpenSearch dashboard
-- **Fine-grained access control**: Secure access to the OpenSearch domain
-- **SSH tunneling**: Access OpenSearch dashboard securely through the jump server
-- **Modular design**: Easy to customize and extend
+- **IAM user/role mapping**: Automatic mapping of IAM users and roles to OpenSearch roles
+- **Fine-grained access control**: Secure access management for OpenSearch
+- **Hardcoded credentials**: Simplified setup using hardcoded credentials for the existing OpenSearch domain
+
+## Documentation
+
+- [Environment Setup Guide](./docs/environment_setup.md) - How to set up your environment
+- [AWS Resources](./docs/aws_resources.md) - Details of all AWS resources created
+- [Manual Steps](./docs/manualstep.md) - Manual steps required after deployment
+- [Manual Lambda Creation Guide](./docs/manual_lambda_creation.md) - Step-by-step instructions for creating Lambda functions in AWS Console
 
 ## Prerequisites
 
 - Terraform >= 1.0.0
 - AWS CLI configured with appropriate permissions
-- SSH key pair named 'opensearch-jump-server-key' (see manual steps)
+- Existing OpenSearch domain
 - Python 3.9+ (for local Lambda development)
 
 ## Directory Structure
@@ -36,35 +40,44 @@ The project creates:
 ```
 opensearch-terraform/
 ├── docs/
-│   └── manualstep.md         # Manual steps documentation
+│   ├── aws_resources.md        # Details of AWS resources
+│   ├── environment_setup.md    # Environment setup guide
+│   ├── manual_lambda_creation.md # Guide for manual Lambda creation
+│   └── manualstep.md           # Manual steps documentation
 ├── lambda/
 │   ├── snapshot/             # Lambda code for snapshot automation
 │   │   ├── index.py          # Main Lambda function code
 │   │   └── requirements.txt  # Python dependencies
-│   └── iam_mapper/           # Lambda code for IAM user mapping
+│   ├── iam_mapper/           # Lambda code for IAM user mapping
+│   │   ├── index.py          # Main Lambda function code
+│   │   └── requirements.txt  # Python dependencies
+│   └── role_mapper/          # Lambda code for IAM role mapping
 │       ├── index.py          # Main Lambda function code
 │       └── requirements.txt  # Python dependencies
-└── terraform/
-    ├── environments/
-    │   └── dev/              # Development environment configuration
-    │       ├── main.tf       # Main Terraform configuration
-    │       ├── variables.tf  # Variable definitions
-    │       ├── outputs.tf    # Output definitions
-    │       └── terraform.tfvars # Variable values
-    └── modules/
-        ├── ec2/              # Jump server module
-        ├── lambda/           # Lambda functions module
-        ├── opensearch/       # OpenSearch domain module
-        └── vpc/              # VPC and networking module
+├── terraform/
+│   ├── environments/
+│   │   └── dev/              # Development environment configuration
+│   │       └── main.tf       # Main Terraform configuration
+│   └── modules/
+│       └── lambda/           # Lambda functions module
+└── prepare-lambda-packages.ps1  # Script to prepare Lambda packages
 ```
 
 ## Deployment Instructions
 
 1. Clone the repository
-2. Make sure you have the necessary AWS credentials configured
-3. Create the SSH key pair in AWS Console (see docs/manualstep.md)
-4. Modify variables in `terraform/environments/dev/terraform.tfvars` as needed
-5. Deploy the infrastructure:
+2. Update Lambda function variables in `terraform/environments/dev/main.tf`:
+   - OpenSearch endpoint
+   - Region
+   - Admin username/password
+3. Prepare the Lambda packages:
+
+```powershell
+# Run the prepare-lambda-packages script
+.\prepare-lambda-packages.ps1
+```
+
+4. Deploy the infrastructure:
 
 ```bash
 # Navigate to the environment directory
@@ -80,13 +93,43 @@ terraform plan
 terraform apply
 ```
 
-## Usage
+### Alternative: Manual Deployment
 
-Once deployed, you can:
+If you prefer to create resources manually through the AWS Console instead of using Terraform:
 
-1. Connect to the OpenSearch dashboard using SSH tunneling (see docs/manualstep.md)
-2. Map IAM users to the OpenSearch dashboard by using the Lambda function (see docs/manualstep.md)
-3. Take manual snapshots or rely on the hourly automated snapshots
+1. Follow the step-by-step instructions in [Manual Lambda Creation Guide](./docs/manual_lambda_creation.md)
+2. This guide covers creating all required IAM roles, S3 bucket, and Lambda functions
+
+## Using the Lambda Functions
+
+### IAM User Mapper
+
+Invoke with:
+
+```json
+{
+  "userName": "opensearch-user",
+  "createIfMissing": true,
+  "createInternalUser": true,
+  "opensearchRole": "all_access",
+  "forceCredentialReset": false
+}
+```
+
+### Role Mapper
+
+Invoke with:
+
+```json
+{
+  "roleName": "opensearch-role",
+  "opensearchRole": "all_access"
+}
+```
+
+### Snapshot
+
+The snapshot Lambda function runs automatically every hour. No manual invocation needed.
 
 ## Cleaning Up
 
@@ -98,8 +141,4 @@ cd opensearch-terraform/terraform/environments/dev
 
 # Destroy resources
 terraform destroy
-```
-
-## Manual Steps
-
-For required manual steps, please refer to [Manual Steps Documentation](./docs/manualstep.md). 
+``` 

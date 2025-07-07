@@ -5,14 +5,15 @@ import string
 import random
 import uuid
 import base64
+import os
 from botocore.exceptions import ClientError
 from requests_aws4auth import AWS4Auth
 
-# Hardcoded values
-host = "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com"  # OpenSearch domain endpoint without https://
-region = "us-east-2"
-master_username = "admin"
-master_password = "StrongPassword123!"  # Hardcoded password (in a real environment, use a more secure method)
+# Environment variables with hardcoded fallbacks for client's existing OpenSearch domain
+host = os.environ.get('OPENSEARCH_ENDPOINT', "search-dev-opensearch-abcdef1234567890.us-east-2.es.amazonaws.com")
+region = os.environ.get('REGION', "us-east-2")
+master_username = os.environ.get('MASTER_USERNAME', "admin")
+master_password = os.environ.get('MASTER_PASSWORD', "StrongPassword123!")
 
 # AWS credentials for signing requests
 credentials = boto3.Session().get_credentials()
@@ -248,67 +249,58 @@ def lambda_handler(event, context):
     }
     """
     try:
-        # Get the username from the event
+        # Extract parameters from event
         user_name = event.get('userName')
         create_if_missing = event.get('createIfMissing', True)
         create_internal_user = event.get('createInternalUser', True)
         opensearch_role = event.get('opensearchRole', 'all_access')
         force_credential_reset = event.get('forceCredentialReset', False)
         
+        # Validate required parameters
         if not user_name:
             return {
                 'statusCode': 400,
                 'body': json.dumps('userName parameter is required')
             }
+            
+        # Create or update IAM user
+        user_arn = None
+        user_credentials = None
+        user_status = None
         
-        # Check if master password is available
-        if not master_password:
-            return {
-                'statusCode': 500,
-                'body': json.dumps('MASTER_PASSWORD environment variable not set')
-            }
-        
-        # Use basic auth for OpenSearch request
-        auth = (master_username, master_password)
-        
-        # Get or create the IAM user ARN
-        if create_if_missing or force_credential_reset:
-            try:
-                user_arn, credentials, status = create_or_update_iam_user(user_name, force_credential_reset)
-                
-                # Create or update an internal user in OpenSearch if requested
-                if create_internal_user and credentials:  # Only if we have credentials
-                    internal_user_success, internal_user_status = create_opensearch_internal_user(
-                        user_name, 
-                        credentials['password'], 
-                        auth
-                    )
-                    if not internal_user_success:
-                        return {
-                            'statusCode': 500,
-                            'body': json.dumps(f'Error creating internal OpenSearch user: {internal_user_status}')
-                        }
-                
-            except Exception as e:
-                return {
-                    'statusCode': 500,
-                    'body': json.dumps(f'Error creating/updating IAM User: {str(e)}')
-                }
+        if create_if_missing:
+            user_arn, user_credentials, user_status = create_or_update_iam_user(user_name, force_credential_reset)
         else:
-            # Just get the user ARN if it exists
+            # Just get the user without creating/updating
             try:
                 user_response = iam.get_user(UserName=user_name)
                 user_arn = user_response['User']['Arn']
-                credentials = None
-                status = "existing"
-            except Exception as e:
+                user_status = "existing"
+            except iam.exceptions.NoSuchEntityException:
                 return {
                     'statusCode': 404,
-                    'body': json.dumps(f'IAM User not found: {str(e)}')
+                    'body': json.dumps(f'User {user_name} does not exist and createIfMissing is set to false')
                 }
         
-        # Map the user to the specified OpenSearch role
+        # Create internal user in OpenSearch if requested
+        internal_user_created = False
+        internal_user_status = None
+        
+        if create_internal_user:
+            # Extract password for the internal user (if available)
+            password = user_credentials.get('password') if user_credentials else None
+            
+            # Use basic auth for OpenSearch API requests
+            auth = (master_username, master_password)
+            
+            # Create or update internal user
+            internal_user_created, internal_user_status = create_opensearch_internal_user(user_name, password, auth)
+        
+        # Map the user to a role in OpenSearch
         role_mapping_endpoint = f'https://{host}/_plugins/_security/api/rolesmapping/{opensearch_role}'
+        
+        # Use basic auth for OpenSearch request
+        auth = (master_username, master_password)
         
         # First get current mappings
         get_response = requests.get(role_mapping_endpoint, auth=auth, verify=True)
@@ -324,7 +316,6 @@ def lambda_handler(event, context):
         
         # Initialize update_payload with all existing mappings to preserve them
         update_payload = {}
-        
         if opensearch_role in current_mappings:
             # Copy all existing mapping fields (users, hosts, etc.)
             update_payload = current_mappings[opensearch_role]
@@ -334,46 +325,29 @@ def lambda_handler(event, context):
             for field in reserved_fields:
                 if field in update_payload:
                     del update_payload[field]
-            
-            backend_roles = update_payload.get('backend_roles', [])
-            
-            # If user is already mapped, return success
-            if user_arn in backend_roles:
-                response_data = {
-                    'message': f'User {user_name} is already mapped to {opensearch_role} role',
-                    'userStatus': status,
-                    'mapping': update_payload
-                }
-                
-                if credentials:
-                    response_data['credentials'] = credentials
-                
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps(response_data)
-                }
-            
-            # Add user to existing backend roles
-            backend_roles.append(user_arn)
-            update_payload['backend_roles'] = backend_roles
         else:
-            # Create new mapping with the user
-            update_payload = {
-                "backend_roles": [user_arn],
-                "users": []
-            }
+            # If no existing mapping, create a new one
+            update_payload = {}
         
-        # Make sure 'users' field exists to preserve other users
+        # Ensure backend_roles list exists
+        if 'backend_roles' not in update_payload:
+            update_payload['backend_roles'] = []
+        
+        # Add the user ARN to backend_roles if not already there
+        if user_arn and user_arn not in update_payload['backend_roles']:
+            update_payload['backend_roles'].append(user_arn)
+        
+        # Ensure users list exists
         if 'users' not in update_payload:
             update_payload['users'] = []
+        
+        # Add the user to users list if not already there and internal user was created
+        if internal_user_created and user_name not in update_payload['users']:
+            update_payload['users'].append(user_name)
         
         # Always ensure 'admin' is in the users list for all_access role
         if opensearch_role == 'all_access' and 'admin' not in update_payload['users']:
             update_payload['users'].append('admin')
-        
-        # If we created an internal user, add it to the users list for this role too
-        if create_internal_user and user_name not in update_payload['users']:
-            update_payload['users'].append(user_name)
         
         # Update role mapping
         headers = {"Content-Type": "application/json"}
@@ -386,18 +360,20 @@ def lambda_handler(event, context):
         )
         
         if put_response.status_code >= 200 and put_response.status_code < 300:
-            response_data = {
+            response_body = {
                 'message': f'Successfully mapped user {user_name} to {opensearch_role} role',
-                'userStatus': status,
+                'user_status': user_status,
+                'internal_user_status': internal_user_status,
                 'mapping': update_payload
             }
             
-            if credentials:
-                response_data['credentials'] = credentials
+            # Add credentials to response if they were created/updated
+            if user_credentials:
+                response_body['credentials'] = user_credentials
                 
             return {
                 'statusCode': 200,
-                'body': json.dumps(response_data)
+                'body': json.dumps(response_body)
             }
         else:
             return {
